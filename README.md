@@ -14,6 +14,8 @@ pip install -e .
 
 ## 初始化配置
 
+### 交互式（默认）
+
 ```bash
 pangu config init
 ```
@@ -27,10 +29,33 @@ pangu config init
 | auth_mode | 认证模式 | `token` 或 `apikey` |
 | username | 用户名（token 模式） | `your_username` |
 | domain_name | 账号名（token 模式） | `your_domain` |
+| project_name | 项目名称（token 模式） | `cn-north-7` |
 | project_id | 项目 ID | `abc123...` |
 | default_workspace_id | 默认工作空间 ID | `ws-xxx` |
 
 配置保存在 `~/.pangu/config.yaml`，可随时用 `pangu config show` 查看。
+
+### 非交互式（适合脚本 / CI/CD / skill 封装）
+
+```bash
+# token 模式
+pangu config init -n \
+  --endpoint https://pangu.example.com \
+  --iam-endpoint https://iam.example.com \
+  --username admin \
+  --domain-name myorg \
+  --project-name cn-north-7 \
+  --project-id abc123 \
+  --workspace-id ws-xxx \
+  --password mypass
+
+# apikey 模式
+pangu config init -n \
+  --endpoint https://pangu.example.com \
+  --auth-mode apikey \
+  --api-key your-key \
+  --project-id abc123
+```
 
 ### 测试环境 / 自签名证书
 
@@ -46,6 +71,22 @@ pangu config set iam_endpoint http://192.168.1.1:31943
 ```bash
 pangu config set endpoint https://192.168.1.1:8080
 pangu config set ssl_verify false
+```
+
+### 系统代理问题（Windows 504）
+
+Windows 系统代理会被 httpx 自动读取（注册表 + 环境变量），可能导致对内网地址的请求经过代理后返回 504。在 hosts 里添加忽略无效，需在 CLI 层面关闭代理感知：
+
+```bash
+# 完全忽略系统代理（推荐，访问内网环境时使用）
+pangu config set use_system_proxy false
+
+# 或显式指定代理地址（走特定代理时使用）
+pangu config set proxy http://127.0.0.1:7890
+
+# 恢复使用系统代理
+pangu config set use_system_proxy true
+pangu config set proxy ""
 ```
 
 ### 单项修改

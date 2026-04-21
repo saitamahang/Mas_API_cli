@@ -15,10 +15,10 @@ from pangu.output import output
 app = typer.Typer(help="数据集管理")
 console = Console()
 
-BASE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-manager/datasets"
+BASE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/datasets"
 DETAIL_PATH = BASE_PATH + "/{dataset_id}"
 PUBLISH_PATH = BASE_PATH + "/{dataset_id}/data-annotations"
-OPERATORS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-manager/operators"
+OPERATORS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/operators"
 PROCESS_PATH = BASE_PATH + "/{dataset_id}/data-processes"
 
 LIST_COLUMNS = [

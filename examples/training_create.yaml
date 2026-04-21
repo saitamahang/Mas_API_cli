@@ -2,51 +2,69 @@
 # 使用方式: pangu training create -f examples/training_create.yaml [--wait]
 #
 # 命令行参数优先级高于此文件，例如：
-#   pangu training create -f training_create.yaml --instances 16
+#   pangu training create -f training_create.yaml --nodes 16
 
 # 任务名称（必填）
-job_name: my-finetune-job
+task_name: my-finetune-job
 
 # 任务描述（可选）
-description: "基于盘古 NLP 的微调训练"
+train_task_desc: "基于盘古 NLP 的 SFT 微调训练"
 
-# 任务类型（必填）
-task_type: finetune               # finetune / pretrain / rlhf
+# 模型资产 ID（必填）
+asset_id: asset-xxxxxxxxxxxxxxxx
 
-# 模型资产
-asset:
-  asset_id: asset-xxxxxxxxxxxxxxxx
-  asset_type: NLP                 # NLP / CV
+# 模型 ID（NLP/MM 必填，预置模型时与 asset_id 相同）
+model_id: asset-xxxxxxxxxxxxxxxx
 
-# 资源配置
+# 模型类型（必填）: NLP | MM | CV | Predict | AI4Science
+model_type: NLP
+
+# 训练类型（必填）: SFT | PRETRAIN | LORA | DPO
+train_type: SFT
+
+# 模型来源（必填）: pangu | third | pangu-third
+model_source: pangu
+
+# 总算力数（必填）= 卡数 × flavor，例如 1 节点 × 313 = 313
+t_flops: 313
+
+# 资源池节点数（可选，默认 1）
+pool_node_count: 1
+
+# 算力规格（可选，常见值 313 / 280）
+flavor: 313
+
+# 资源池配置（可选）
 resource_config:
-  pool_id: pool-xxxxxxxxxxxxxxxx  # 资源池 ID（必填）
-  node_num: 8                     # 训练节点数
-  device_type: NPU                # NPU / GPU
+  pool_id: pool-xxxxxxxxxxxxxxxx   # 专属资源池 ID
+  pool_type: private               # private（专属）| public（公共）
+  chip_type: Snt9B3                # 芯片规格，联系服务获取
 
-# 数据集配置（可选）
-# dataset_config:
-#   dataset_id: dataset-xxxxxxxx
-#   annotation_id: anno-xxxxxxxx  # 已发布版本 ID
+# 训练数据集（可选）
+# dataset_id: dataset-xxxxxxxx
+# dataset_name: my-dataset
+# dataset_version_id: version-xxxxxxxx
 
-# Checkpoint 配置（可选，断点续训）
+# 验证数据集（可选）
+# eval_dataset_id: dataset-xxxxxxxx
+# eval_dataset_name: my-eval-dataset
+
+# 训练任务运行参数（必填，具体字段取自获取模型详情接口 workflow_info.parameters）
+task_parameter:
+  learning_rate: "1e-5"
+  batch_size: "32"
+  max_steps: "10000"
+  warmup_steps: "500"
+
+# 断点续训配置（可选）
+# checkpoint_id: xxxx-xxxx-xxxx   # 续训时指定断点 ID
 # checkpoint_config:
-#   obs_path: obs://my-bucket/checkpoints/
-#   resume_from: obs://my-bucket/checkpoints/step-1000/
+#   save_checkpoints_max: 3        # 保存断点数量，0 关闭，-1 无限
+#   skipped_steps: 0               # 跳过步数（续训场景）
+#   restore_training: 0            # 0 重新训练 | 1 续训
 
-# SFS 共享存储配置（可选）
+# SFS 加速配置（可选）
 # sfs_config:
-#   sfs_id: sfs-xxxxxxxxxxxxxxxx
-#   mount_path: /mnt/sfs/
-
-# 输出配置（可选）
-# output_config:
-#   obs_path: obs://my-bucket/outputs/
-
-# 自定义训练参数（可选，传递给训练脚本）
-# task_parameter:
-#   learning_rate: "1e-5"
-#   batch_size: "32"
-#   max_steps: "10000"
-#   lora_rank: "8"
-#   warmup_steps: "500"
+#   model_sfs_enable: false        # 开启模型 SFS 加速
+#   dataset_sfs_enable: false      # 开启数据集 SFS 加速
+#   dataset_preload: false         # 数据预热加载

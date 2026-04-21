@@ -201,61 +201,67 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 
 ### 训练任务管理
 
+> 训练任务的主键为 `task_id`，状态字段为 `task_status`。
+> 日志、节点、指标、断点等命令需要 `execution_id`，工具会自动从任务详情中获取，也可通过 `--execution-id` 手动指定。
+
 ```bash
-# 查询列表
-pangu training list
-pangu training list --status running
-pangu training list --name keyword --limit 20
-
 # 查看详情
-pangu training get <job_id>
+pangu training get <task_id>
 
-# 创建任务（命令行参数）
+# 创建任务（YAML 配置，推荐）
+pangu training create -f examples/training_create.yaml
+
+# 创建任务（命令行参数，必填项较多）
 pangu training create \
   --name my-finetune \
   --asset-id <asset_id> \
-  --asset-type NLP \
-  --task-type finetune \
+  --model-id <model_id> \
+  --model-type NLP \
+  --train-type SFT \
+  --model-source pangu \
+  --t-flops 313 \
   --pool-id <pool_id> \
-  --instances 8
-
-# 创建任务（YAML 配置）
-pangu training create -f examples/training_create.yaml
+  --nodes 1
 
 # 创建并等待完成
 pangu training create -f examples/training_create.yaml --wait
 
-# 停止 / 重试 / 删除
-pangu training stop <job_id>
-pangu training retry <job_id>
-pangu training delete <job_id>
+# 停止任务（状态为 running/pending 时可用）
+pangu training stop <task_id>
 
-# 查看日志
-pangu training logs <job_id>
-pangu training logs <job_id> --step train --lines 200
-pangu training node-logs <job_id> <node_id>
+# 重试任务（状态为 failed 时可用）
+pangu training retry <task_id>
+pangu training retry <task_id> --wait
 
-# 节点列表
-pangu training nodes <job_id>
+# 批量删除（可传多个 task_id）
+pangu training delete <task_id1> <task_id2>
 
-# 训练指标
-pangu training metrics <job_id>
-pangu training metrics <job_id> --metric loss
+# 查看训练日志（自动获取 execution_id 和 job_id）
+pangu training logs <task_id>
+pangu training logs <task_id> --node worker-0
 
-# Checkpoint 列表
-pangu training checkpoints <job_id>
+# 查看训练节点信息
+pangu training nodes <task_id>
 
-# 发布为模型资产
-pangu training publish <job_id> --asset-name my-model-v1
+# 查看训练指标
+pangu training metrics <task_id> --model-type NLP
 
-# 历史版本
-pangu training versions <job_id>
+# 查看断点 Checkpoint 列表
+pangu training checkpoints <task_id>
 
-# 资源用量
-pangu training usage <job_id>
+# 发布模型到资产中心（自动获取 execution_id 和 model_id）
+pangu training publish <task_id> --asset-name my-model-v1
 
-# 快捷查看运行中任务
-pangu training running
+# 查看已发布的训练模型列表
+pangu training models
+pangu training models --model-type NLP --action-type SFT
+
+# 查询时间范围内的资源用量
+pangu training usage
+pangu training usage --start-time 2024-01-01T00:00:00 --end-time 2024-01-31T23:59:59
+
+# 查询指定资源池上运行的任务
+pangu training running <pool_id>
 ```
 
 ---

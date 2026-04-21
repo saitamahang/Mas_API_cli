@@ -249,18 +249,24 @@ pangu training metrics <task_id> --model-type NLP
 # 查看断点 Checkpoint 列表
 pangu training checkpoints <task_id>
 
-# 发布模型到资产中心（自动获取 execution_id 和 model_id）
-pangu training publish <task_id> --asset-name my-model-v1
+# 发布模型到资产中心（asset-name 和 visibility 必填）
+pangu training publish <task_id> --asset-name my-model-v1 --visibility current
 
-# 查看已发布的训练模型列表
-pangu training models
-pangu training models --model-type NLP --action-type SFT
+# 查看训练任务产生的模型列表（execution_id 必填，自动从任务详情获取）
+pangu training models <task_id>
+pangu training models <task_id> --model-type NLP --action-type SFT
 
-# 查询时间范围内的资源用量
-pangu training usage
+# 获取模型详情（创建训练任务前用于查询 task_parameter 模板，3.13.11）
+pangu training model-detail \
+  --model-id <model_id> \
+  --model-type NLP \
+  --train-type SFT \
+  --model-source pangu
+
+# 查询时间范围内的资源用量（start-time 和 end-time 必填）
 pangu training usage --start-time 2024-01-01T00:00:00 --end-time 2024-01-31T23:59:59
 
-# 查询指定资源池上运行的任务
+# 查询指定资源池上运行的任务（pool_id 必填）
 pangu training running <pool_id>
 ```
 

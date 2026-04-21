@@ -298,6 +298,8 @@ def task_checkpoints(
     task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID"),
+    limit: Optional[int] = typer.Option(None, "--limit", help="分页大小"),
+    page: Optional[int] = typer.Option(None, "--page", help="起始页"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
     """查看断点 Checkpoint 列表 (3.13.10)"""
@@ -312,7 +314,10 @@ def task_checkpoints(
 
     client = PanguClient()
     path = BASE + "/execution/{execution_id}/checkpoints"
-    data = client.get(path, workspace_id=workspace, execution_id=execution_id)
+    params: dict = {}
+    if limit: params["limit"] = limit
+    if page:  params["page"] = page
+    data = client.get(path, workspace_id=workspace, params=params or None, execution_id=execution_id)
     output(data, fmt=fmt)
 
 
@@ -322,9 +327,9 @@ def publish_model(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID"),
     model_id: Optional[str] = typer.Option(None, "--model-id", help="模型 ID"),
-    asset_name: Optional[str] = typer.Option(None, "--asset-name", help="发布的资产名称"),
+    asset_name: str = typer.Option(..., "--asset-name", help="发布的资产名称（必填）"),
+    visibility: str = typer.Option(..., "--visibility", help="可见性（必填）: current|all"),
     description: str = typer.Option("", "--description", "-d", help="描述"),
-    visibility: str = typer.Option("current", "--visibility", help="可见性: current|all"),
     category: str = typer.Option("3rd", "--category", help="模型来源: pangu|3rd"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
@@ -345,12 +350,11 @@ def publish_model(
     body: dict = {
         "execution_id": execution_id,
         "model_id": model_id,
-        "description": description,
+        "asset_name": asset_name,
         "visibility": visibility,
+        "description": description,
         "category": category,
     }
-    if asset_name:
-        body["asset_name"] = asset_name
 
     data = client.post(PUBLISH_PATH, workspace_id=workspace, json=body)
     output(data, fmt=fmt)
@@ -359,35 +363,75 @@ def publish_model(
 
 @app.command("models")
 def list_models(
+    task_id: str = typer.Argument(help="训练任务 ID（用于自动获取 execution_id）"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID（必填，可自动从任务详情获取）"),
     model_type: Optional[str] = typer.Option(None, "--model-type", help="NLP|MM|CV|Predict|AI4Science"),
     action_type: Optional[str] = typer.Option(None, "--action-type", help="PRETRAIN|SFT|LORA|QUANTIZATION|DPO"),
+    model_name: Optional[str] = typer.Option(None, "--name", help="按模型名称过滤"),
+    status: Optional[str] = typer.Option(None, "--status", help="published|completed"),
+    limit: Optional[int] = typer.Option(None, "--limit", help="每页数量"),
+    page: Optional[int] = typer.Option(None, "--page", help="起始页"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
-    """查看已发布的训练模型列表 (3.13.8)"""
+    """查看训练任务产生的模型列表 (3.13.8)，execution_id 必填"""
     client = PanguClient()
-    params: dict = {}
+
+    if not execution_id:
+        console.print("[yellow]正在自动获取 execution_id...[/yellow]")
+        detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
+        execution_id = detail.get("execution_id", "")
+
+    if not execution_id:
+        console.print("[red]无法获取 execution_id，请通过 --execution-id 手动指定[/red]")
+        raise typer.Exit(1)
+
+    params: dict = {"execution_id": execution_id}
     if model_type:  params["model_type"] = model_type
     if action_type: params["action_type"] = action_type
+    if model_name:  params["model_name"] = model_name
+    if status:      params["status"] = status
+    if limit:       params["limit"] = limit
+    if page:        params["page"] = page
 
-    data = client.get(MODELS_PATH, workspace_id=workspace, params=params or None)
-    output(data, fmt=fmt, columns=MODEL_COLUMNS, list_key="models", title="已发布模型", status_key="status", id_key="model_id")
+    data = client.get(MODELS_PATH, workspace_id=workspace, params=params)
+    output(data, fmt=fmt, columns=MODEL_COLUMNS, list_key="models", title="训练模型列表", status_key="status", id_key="model_id")
 
 
 @app.command("usage")
 def task_usage(
+    start_time: str = typer.Option(..., "--start-time", help="开始时间（必填，如 2024-01-01T00:00:00）"),
+    end_time: str = typer.Option(..., "--end-time", help="结束时间（必填）"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    start_time: Optional[str] = typer.Option(None, "--start-time", help="开始时间 (如 2024-01-01T00:00:00)"),
-    end_time: Optional[str] = typer.Option(None, "--end-time", help="结束时间"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询训练任务资源用量 (3.13.12)"""
+    """查询时间范围内训练任务资源用量 (3.13.12)，start_time 和 end_time 必填"""
     client = PanguClient()
-    params: dict = {}
-    if start_time: params["start_time"] = start_time
-    if end_time:   params["end_time"] = end_time
+    data = client.get(USAGE_PATH, workspace_id=workspace, params={"start_time": start_time, "end_time": end_time})
+    output(data, fmt=fmt)
 
-    data = client.get(USAGE_PATH, workspace_id=workspace, params=params or None)
+
+@app.command("model-detail")
+def model_detail(
+    model_id: str = typer.Option(..., "--model-id", help="模型 ID（必填）"),
+    model_type: str = typer.Option(..., "--model-type", help="模型类型（必填）: NLP|MM|CV|Predict|AI4Science"),
+    train_type: str = typer.Option(..., "--train-type", help="训练类型（必填）: SFT|PRETRAIN|LORA|DPO"),
+    model_source: str = typer.Option(..., "--model-source", help="模型来源（必填）: pangu|third|pangu-third"),
+    strategy: Optional[str] = typer.Option(None, "--strategy", help="策略（可选）"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+):
+    """获取模型详情，用于创建训练任务前查询 task_parameter 等参数 (3.13.11)"""
+    client = PanguClient()
+    body: dict = {
+        "model_id": model_id,
+        "model_type": model_type,
+        "train_type": train_type,
+        "model_source": model_source,
+    }
+    if strategy:
+        body["strategy"] = strategy
+    data = client.post(BASE + "/model-detail", workspace_id=workspace, json=body)
     output(data, fmt=fmt)
 
 

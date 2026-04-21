@@ -9,7 +9,9 @@
       "Bash(python3:*)",
       "Bash(python -m py_compile src/pangu/commands/training.py)",
       "Bash(python -m py_compile src/pangu/commands/dataset.py)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(python3 -c ' *)",
+      "Read(//tmp/**)"
     ]
   }
 }

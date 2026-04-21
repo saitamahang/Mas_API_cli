@@ -35,9 +35,12 @@ class PanguClient:
     ):
         self.config = config or PanguConfig.load()
         self.auth = auth or AuthManager(self.config)
+        proxy_url = self.config.proxy or None
         self._http = httpx.Client(
             verify=self.config.ssl_verify,
             timeout=self.config.timeout,
+            proxy=proxy_url,
+            trust_env=self.config.use_system_proxy,
         )
 
     def _build_url(self, path: str, **path_params: str) -> str:

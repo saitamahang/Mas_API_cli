@@ -11,7 +11,10 @@
       "Bash(python -m py_compile src/pangu/commands/dataset.py)",
       "Bash(pip install *)",
       "Bash(python3 -c ' *)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(python -c \"import httpx; help\\(httpx.Client.__init__\\)\")",
+      "Bash(python *)",
+      "Bash(pip show *)"
     ]
   }
 }

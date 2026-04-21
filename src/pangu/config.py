@@ -35,9 +35,14 @@ class PanguConfig(BaseModel):
     # API Key 模式
     api_key: str = Field(default="", description="API Key (X-Apig-AppCode)")
 
+    # Token 模式密码（可选，明文存储，优先级低于 PANGU_PASSWORD 环境变量）
+    password: str = Field(default="", description="登录密码（可选，明文存储）")
+
     # 网络
     ssl_verify: bool = Field(default=True, description="是否验证 SSL 证书")
     timeout: int = Field(default=60, description="HTTP 请求超时秒数")
+    use_system_proxy: bool = Field(default=True, description="是否使用系统代理（Windows 注册表 / 环境变量）")
+    proxy: str = Field(default="", description="显式指定代理地址，如 http://127.0.0.1:7890；空则不强制")
 
     @classmethod
     def load(cls) -> "PanguConfig":

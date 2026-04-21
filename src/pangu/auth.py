@@ -105,9 +105,11 @@ class AuthManager:
                 f"请先运行 pangu config set <key> <value>"
             )
 
-        # 密码优先级: 参数 > 环境变量 > 交互输入
+        # 密码优先级: 参数 > 环境变量 > 配置文件 > 交互输入
         if password is None:
             password = os.environ.get("PANGU_PASSWORD")
+        if password is None and cfg.password:
+            password = cfg.password
         if password is None:
             password = getpass.getpass(f"请输入 {cfg.username} 的密码: ")
 
@@ -130,11 +132,14 @@ class AuthManager:
             }
         }
 
+        proxy_url = cfg.proxy or None
         resp = httpx.post(
             url,
             json=payload,
             verify=cfg.ssl_verify,
             timeout=cfg.timeout,
+            proxy=proxy_url,
+            trust_env=cfg.use_system_proxy,
         )
 
         if resp.status_code != 201:

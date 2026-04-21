@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pangu.config import PanguConfig
+from pangu.config import PanguConfig, CONFIG_DIR
 
 app = typer.Typer(help="配置管理")
 console = Console()
@@ -49,7 +49,7 @@ def init():
     )
 
     config.save()
-    console.print(f"\n[green]配置已保存到 {config.CONFIG_DIR / 'config.yaml'}[/green]")
+    console.print(f"\n[green]配置已保存到 {CONFIG_DIR / 'config.yaml'}[/green]")
 
 
 @app.command("set")

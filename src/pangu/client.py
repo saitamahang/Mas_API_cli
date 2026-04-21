@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import httpx
 from rich.console import Console
@@ -60,7 +60,13 @@ class PanguClient:
                 "endpoint 未配置。请运行: pangu config set endpoint <域名>"
             )
 
-        return f"https://{endpoint}{path}"
+        # 若 endpoint 已含协议头则直接使用，否则默认 https://
+        if endpoint.startswith("http://") or endpoint.startswith("https://"):
+            base = endpoint.rstrip("/")
+        else:
+            base = f"https://{endpoint}"
+
+        return f"{base}{path}"
 
     def _handle_response(self, resp: httpx.Response) -> Any:
         """统一处理响应"""
@@ -141,28 +147,32 @@ class PanguClient:
 
     def wait_for_status(
         self,
-        poll_fn: Callable[[], dict],
-        target_statuses: set[str],
-        failure_statuses: set[str] | None = None,
+        path: str,
+        target_statuses: list[str],
+        failure_statuses: list[str] | None = None,
         status_key: str = "status",
         interval: int = 10,
         timeout: int = 3600,
+        workspace_id: Optional[str] = None,
+        **path_params: str,
     ) -> dict:
         """轮询等待资源达到目标状态
 
         Args:
-            poll_fn: 轮询函数，返回资源详情 dict
-            target_statuses: 目标状态集合
-            failure_statuses: 失败状态集合
+            path: 轮询的 API 路径（含路径变量）
+            target_statuses: 目标状态列表（到达任意一个则结束）
+            failure_statuses: 失败状态列表（到达任意一个则抛出异常）
             status_key: 状态字段名
             interval: 轮询间隔秒数
             timeout: 超时秒数
+            workspace_id: 工作空间 ID
+            **path_params: 路径变量
         """
-        failure_statuses = failure_statuses or {"failed"}
+        failure_statuses = failure_statuses or ["failed"]
         start = time.time()
 
         while True:
-            result = poll_fn()
+            result = self.get(path, workspace_id=workspace_id, **path_params)
             current = result.get(status_key, "")
 
             if current in target_statuses:

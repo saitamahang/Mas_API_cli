@@ -22,8 +22,8 @@ pangu config init
 
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
-| endpoint | 平台 API 地址 | `https://pangu.cn-north-7.myhuaweicloud.com` |
-| iam_endpoint | IAM 认证地址 | `https://iam.cn-north-7.myhuaweicloud.com` |
+| endpoint | 平台 API 地址 | `https://pangu.cn-north-7.myhuaweicloud.com` 或 `http://192.168.1.1:8080` |
+| iam_endpoint | IAM 认证地址 | `https://iam.cn-north-7.myhuaweicloud.com` 或 `http://192.168.1.1:31943` |
 | auth_mode | 认证模式 | `token` 或 `apikey` |
 | username | 用户名（token 模式） | `your_username` |
 | domain_name | 账号名（token 模式） | `your_domain` |
@@ -31,6 +31,22 @@ pangu config init
 | default_workspace_id | 默认工作空间 ID | `ws-xxx` |
 
 配置保存在 `~/.pangu/config.yaml`，可随时用 `pangu config show` 查看。
+
+### 测试环境 / 自签名证书
+
+如果 endpoint 是 IP:PORT 形式的测试环境，按以下方式配置：
+
+**HTTP 环境**（endpoint 直接写 `http://`）：
+```bash
+pangu config set endpoint http://192.168.1.1:8080
+pangu config set iam_endpoint http://192.168.1.1:31943
+```
+
+**HTTPS + 自签名证书**（关闭证书验证）：
+```bash
+pangu config set endpoint https://192.168.1.1:8080
+pangu config set ssl_verify false
+```
 
 ### 单项修改
 

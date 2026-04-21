@@ -1,0 +1,52 @@
+# 训练任务创建配置示例
+# 使用方式: pangu training create -f examples/training_create.yaml [--wait]
+#
+# 命令行参数优先级高于此文件，例如：
+#   pangu training create -f training_create.yaml --instances 16
+
+# 任务名称（必填）
+job_name: my-finetune-job
+
+# 任务描述（可选）
+description: "基于盘古 NLP 的微调训练"
+
+# 任务类型（必填）
+task_type: finetune               # finetune / pretrain / rlhf
+
+# 模型资产
+asset:
+  asset_id: asset-xxxxxxxxxxxxxxxx
+  asset_type: NLP                 # NLP / CV
+
+# 资源配置
+resource_config:
+  pool_id: pool-xxxxxxxxxxxxxxxx  # 资源池 ID（必填）
+  node_num: 8                     # 训练节点数
+  device_type: NPU                # NPU / GPU
+
+# 数据集配置（可选）
+# dataset_config:
+#   dataset_id: dataset-xxxxxxxx
+#   annotation_id: anno-xxxxxxxx  # 已发布版本 ID
+
+# Checkpoint 配置（可选，断点续训）
+# checkpoint_config:
+#   obs_path: obs://my-bucket/checkpoints/
+#   resume_from: obs://my-bucket/checkpoints/step-1000/
+
+# SFS 共享存储配置（可选）
+# sfs_config:
+#   sfs_id: sfs-xxxxxxxxxxxxxxxx
+#   mount_path: /mnt/sfs/
+
+# 输出配置（可选）
+# output_config:
+#   obs_path: obs://my-bucket/outputs/
+
+# 自定义训练参数（可选，传递给训练脚本）
+# task_parameter:
+#   learning_rate: "1e-5"
+#   batch_size: "32"
+#   max_steps: "10000"
+#   lora_rank: "8"
+#   warmup_steps: "500"

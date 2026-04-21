@@ -1,0 +1,40 @@
+# 推理服务部署配置示例
+# 使用方式: pangu service deploy -f examples/service_deploy.yaml [--wait]
+#
+# 命令行参数优先级高于此文件，可按需覆盖单个字段：
+#   pangu service deploy -f service_deploy.yaml --instances 2
+
+# 服务名称（必填）
+service_name: my-inference-service
+
+# 模型资产（必填）
+asset_id: asset-xxxxxxxxxxxxxxxx
+asset_type: NLP                    # NLP / CV / MM / Predict / AI4Science
+
+# 推理类型（必填）
+infer_type: dedicated              # dedicated（专属）/ shared（共享）
+
+# 架构类型
+arch: x86_64                       # x86_64 / aarch64
+
+# 设备配置
+device_type: NPU                   # NPU / GPU / CPU
+chip_type: ""                      # 可选，具体芯片型号
+
+# 请求模式
+request_mode: realtime             # realtime（实时）/ async（异步）
+
+# 资源池（dedicated 模式必填）
+pool_id: pool-xxxxxxxxxxxxxxxx
+
+# 实例数量
+instances: 1
+
+# 负载均衡（可选，dedicated 模式下使用独立 ELB）
+# elb_id: elb-xxxxxxxxxxxxxxxx
+
+# 场景标识（可选）
+# scene: chat
+
+# 安全栏设置（可选）
+# security_bar: true

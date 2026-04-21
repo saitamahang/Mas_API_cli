@@ -1,0 +1,9 @@
+# 推理服务更新配置示例
+# 使用方式: pangu service update <service_id> -f examples/service_update.yaml
+
+# 实例数量（扩缩容）
+instances: 2
+
+# 其他可更新字段（按需启用）
+# pool_id: pool-xxxxxxxxxxxxxxxx
+# device_type: NPU

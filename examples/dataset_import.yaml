@@ -1,0 +1,14 @@
+# 数据集导入配置示例
+# 使用方式: pangu dataset import <dataset_id> -f examples/dataset_import.yaml [--wait]
+
+# 导入类型
+import_type: obs                   # obs / local
+
+# OBS 数据路径（必填）
+obs_path: obs://my-bucket/training-data/
+
+# 数据格式（可选，不填则自动识别）
+# data_format: json                # json / csv / txt / jsonl
+
+# 是否覆盖已有数据（可选）
+# overwrite: false

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pdftotext \"/Users/liyuhang/Code/1.Mas_API_cli/盘古大模型服务\\(PanguLM\\) 8.6.300 API参考\\(for 华为云Stack 8.6.0\\) 01.pdf\" -)",
+      "Bash(python3 -c \"import fitz; print\\('ok'\\)\")",
+      "Bash(python3 -c \"import PyPDF2; print\\('ok'\\)\")",
+      "Bash(python3 -c \"import pdfplumber; print\\('ok'\\)\")",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(python -m py_compile src/pangu/commands/training.py)",
+      "Bash(python -m py_compile src/pangu/commands/dataset.py)"
+    ]
+  }
+}

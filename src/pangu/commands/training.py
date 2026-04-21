@@ -1,8 +1,7 @@
-"""训练任务管理命令 - pangu training create/get/list/stop/retry/delete/logs/..."""
+"""训练任务管理命令 - pangu training"""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -16,414 +15,393 @@ from pangu.output import output
 app = typer.Typer(help="训练任务管理")
 console = Console()
 
-BASE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/training-jobs"
-DETAIL_PATH = BASE_PATH + "/{job_id}"
-VERSIONS_PATH = DETAIL_PATH + "/versions"
-VERSION_PATH = DETAIL_PATH + "/versions/{version_id}"
-
-LIST_COLUMNS = [
-    ("job_id", "任务 ID"),
-    ("job_name", "名称"),
-    ("status", "状态"),
-    ("duration", "耗时(s)"),
-    ("create_time", "创建时间"),
-]
+BASE      = "/v1/{project_id}/workspaces/{workspace_id}/model-train"
+TASK_PATH = BASE + "/train-task/{task_id}"
+TASKS_PATH = BASE + "/train-tasks"          # 批量删除
+ACTION_PATH = BASE + "/train-task/{task_id}/action"
+EXEC_PATH = BASE + "/execution/{execution_id}"
+EXECS_PATH = BASE + "/executions/{execution_id}"  # metrics 用复数
+MODELS_PATH = BASE + "/models"
+PUBLISH_PATH = BASE + "/model/publish"
+USAGE_PATH = BASE + "/resource-usage"
+RUNNING_PATH = BASE + "/tasks"              # 资源池上运行的任务
 
 DETAIL_FIELDS = [
-    ("job_id", "任务 ID"),
-    ("job_name", "名称"),
-    ("status", "状态"),
-    ("duration", "耗时(s)"),
-    ("pre_version_id", "上一版本"),
-    ("description", "描述"),
-    ("create_time", "创建时间"),
-    ("update_time", "更新时间"),
+    ("task_id",       "任务 ID"),
+    ("task_name",     "名称"),
+    ("task_status",   "状态"),
+    ("model_type",    "模型类型"),
+    ("train_type",    "训练类型"),
+    ("train_process", "进度"),
+    ("pool_node_count","节点数"),
+    ("train_task_desc","描述"),
+    ("create_time",   "创建时间"),
+    ("update_time",   "更新时间"),
 ]
 
-VERSION_COLUMNS = [
-    ("version_id", "版本 ID"),
-    ("version_name", "版本名"),
-    ("status", "状态"),
-    ("duration", "耗时(s)"),
+MODEL_COLUMNS = [
+    ("model_id",    "模型 ID"),
+    ("model_name",  "模型名称"),
+    ("model_type",  "类型"),
+    ("status",      "状态"),
     ("create_time", "创建时间"),
 ]
 
 
-def _build_job_body(params: dict, config_file: Optional[str]) -> dict:
-    """合并 YAML 配置与命令行参数构建请求体，命令行参数优先。"""
-    body: dict = {}
-
-    # 先加载 YAML 配置
-    if config_file:
-        p = Path(config_file)
-        if not p.exists():
-            console.print(f"[red]配置文件不存在: {config_file}[/red]")
-            raise typer.Exit(1)
-        with p.open() as f:
-            body = yaml.safe_load(f) or {}
-
-    # 命令行参数覆盖
-    for k, v in params.items():
-        if v is not None:
-            body[k] = v
-
-    return body
-
-
-@app.command("list")
-def list_jobs(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    status: Optional[str] = typer.Option(None, "--status", help="状态过滤: running/succeeded/failed/stopped"),
-    name: Optional[str] = typer.Option(None, "--name", help="按名称搜索"),
-    limit: int = typer.Option(20, "--limit", help="每页数量"),
-    offset: int = typer.Option(0, "--offset", help="起始偏移"),
-    sort_by: str = typer.Option("create_time", "--sort-by", help="排序字段"),
-    order: str = typer.Option("desc", "--order", help="排序方向: asc/desc"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table/json/yaml/id"),
-):
-    """查询训练任务列表"""
-    client = PanguClient()
-    params: dict = {"limit": limit, "offset": offset, "sort_by": sort_by, "order": order}
-    if status:
-        params["status"] = status
-    if name:
-        params["job_name"] = name
-
-    data = client.get(BASE_PATH, workspace_id=workspace, params=params)
-    output(
-        data,
-        fmt=fmt,
-        columns=LIST_COLUMNS,
-        list_key="jobs",
-        title="训练任务",
-        status_key="status",
-        id_key="job_id",
-    )
+def _load_yaml(config_file: str) -> dict:
+    p = Path(config_file)
+    if not p.exists():
+        console.print(f"[red]配置文件不存在: {config_file}[/red]")
+        raise typer.Exit(1)
+    with p.open(encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
 @app.command("get")
-def get_job(
-    job_id: str = typer.Argument(help="任务 ID"),
+def get_task(
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
-    """查询训练任务详情"""
+    """查询训练任务详情 (3.13.3)"""
     client = PanguClient()
-    data = client.get(DETAIL_PATH, workspace_id=workspace, job_id=job_id)
+    data = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
     output(
-        data,
-        fmt=fmt,
+        data, fmt=fmt,
         detail_fields=DETAIL_FIELDS,
-        title=f"训练任务: {data.get('job_name', '')}",
-        status_key="status",
+        title=f"训练任务: {data.get('task_name', '')}",
+        status_key="task_status",
     )
 
 
 @app.command("create")
-def create_job(
+def create_task(
     config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径"),
-    name: Optional[str] = typer.Option(None, "--name", help="任务名称"),
-    description: Optional[str] = typer.Option(None, "--description", "-d", help="任务描述"),
+    name: Optional[str] = typer.Option(None, "--name", help="任务名称 (task_name)"),
     asset_id: Optional[str] = typer.Option(None, "--asset-id", help="模型资产 ID"),
-    asset_type: Optional[str] = typer.Option(None, "--asset-type", help="模型类型: NLP/CV"),
-    task_type: Optional[str] = typer.Option(None, "--task-type", help="任务类型: finetune/pretrain/rlhf"),
+    model_id: Optional[str] = typer.Option(None, "--model-id", help="模型 ID (NLP/MM 必填)"),
+    model_type: Optional[str] = typer.Option(None, "--model-type", help="NLP|MM|CV|Predict|AI4Science"),
+    train_type: Optional[str] = typer.Option(None, "--train-type", help="SFT|PRETRAIN|LORA|DPO"),
+    model_source: Optional[str] = typer.Option(None, "--model-source", help="pangu|third|pangu-third"),
     pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID"),
-    instances: Optional[int] = typer.Option(None, "--instances", help="训练节点数"),
-    device_type: Optional[str] = typer.Option(None, "--device-type", help="设备类型: NPU/GPU"),
+    nodes: Optional[int] = typer.Option(None, "--nodes", help="资源池节点数"),
+    t_flops: Optional[int] = typer.Option(None, "--t-flops", help="总算力数 (卡数 × flavor)"),
+    description: Optional[str] = typer.Option(None, "--description", "-d", help="任务描述"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待任务完成"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
-    """创建训练任务 (可通过 --config 传入 YAML 配置)"""
-    client = PanguClient()
+    """创建训练任务 (3.13.5)，可通过 --config 传入 YAML"""
+    body: dict = _load_yaml(config) if config else {}
 
-    cli_params = {}
-    if name:
-        cli_params["job_name"] = name
-    if description:
-        cli_params["description"] = description
-    if asset_id or asset_type:
-        asset = {}
-        if asset_id:
-            asset["asset_id"] = asset_id
-        if asset_type:
-            asset["asset_type"] = asset_type
-        cli_params["asset"] = asset
-    if task_type:
-        cli_params["task_type"] = task_type
+    # CLI 参数覆盖
+    if name:             body["task_name"] = name
+    if asset_id:         body["asset_id"] = asset_id
+    if model_id:         body["model_id"] = model_id
+    if model_type:       body["model_type"] = model_type
+    if train_type:       body["train_type"] = train_type
+    if model_source:     body["model_source"] = model_source
+    if t_flops is not None: body["t_flops"] = t_flops
+    if description:      body["train_task_desc"] = description
+    if nodes is not None: body["pool_node_count"] = nodes
 
-    # resource_config 组装
-    resource = {}
     if pool_id:
-        resource["pool_id"] = pool_id
-    if instances is not None:
-        resource["node_num"] = instances
-    if device_type:
-        resource["device_type"] = device_type
-    if resource:
-        cli_params["resource_config"] = resource
+        rc = body.setdefault("resource_config", {})
+        rc["pool_id"] = pool_id
 
-    body = _build_job_body(cli_params, config)
+    for req in ("task_name", "asset_id", "model_type", "train_type", "model_source", "t_flops"):
+        if not body.get(req):
+            console.print(f"[red]缺少必填字段: {req}[/red]")
+            raise typer.Exit(1)
 
-    if not body.get("job_name"):
-        console.print("[red]必须提供任务名称 (--name 或配置文件中 job_name 字段)[/red]")
-        raise typer.Exit(1)
+    client = PanguClient()
+    data = client.post(BASE + "/train-task", workspace_id=workspace, json=body)
+    task_id = data.get("task_id", "")
 
-    data = client.post(BASE_PATH, workspace_id=workspace, json=body)
-    job_id = data.get("job_id", "")
+    output(data, fmt=fmt, detail_fields=DETAIL_FIELDS, title="训练任务已创建", status_key="task_status")
 
-    output(
-        data,
-        fmt=fmt,
-        detail_fields=DETAIL_FIELDS,
-        title="训练任务已创建",
-        status_key="status",
-    )
-
-    if wait and job_id:
-        console.print(f"[cyan]等待任务 {job_id} 完成...[/cyan]")
+    if wait and task_id:
+        console.print(f"[cyan]等待任务 {task_id} 完成...[/cyan]")
         final = client.wait_for_status(
-            DETAIL_PATH,
-            target_statuses=["succeeded", "failed", "stopped"],
+            TASK_PATH,
+            target_statuses=["completed", "failed", "stopped"],
             failure_statuses=["failed", "stopped"],
-            status_key="status",
+            status_key="task_status",
             workspace_id=workspace,
-            job_id=job_id,
+            task_id=task_id,
         )
-        console.print(f"[green]任务完成，最终状态: {final.get('status')}[/green]")
+        console.print(f"[green]任务完成，最终状态: {final.get('task_status')}[/green]")
 
 
 @app.command("stop")
-def stop_job(
-    job_id: str = typer.Argument(help="任务 ID"),
+def stop_task(
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
 ):
-    """停止训练任务"""
-    if not yes:
-        if not typer.confirm(f"确认停止任务 {job_id}?"):
-            raise typer.Abort()
-
+    """停止训练任务 (3.13.2)"""
+    if not yes and not typer.confirm(f"确认停止任务 {task_id}?"):
+        raise typer.Abort()
     client = PanguClient()
-    path = DETAIL_PATH + "/stop"
-    client.post(path, workspace_id=workspace, json={}, job_id=job_id)
-    console.print(f"[green]任务 {job_id} 已停止[/green]")
+    client.post(ACTION_PATH, workspace_id=workspace, json={"action_name": "stop"}, task_id=task_id)
+    console.print(f"[green]任务 {task_id} 已停止[/green]")
 
 
 @app.command("retry")
-def retry_job(
-    job_id: str = typer.Argument(help="任务 ID"),
+def retry_task(
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待任务完成"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
-    """重试失败的训练任务"""
+    """重试失败的训练任务 (3.13.2)"""
     client = PanguClient()
-    path = DETAIL_PATH + "/retry"
-    data = client.post(path, workspace_id=workspace, json={}, job_id=job_id)
+    data = client.post(ACTION_PATH, workspace_id=workspace, json={"action_name": "retry"}, task_id=task_id)
+    console.print(f"[green]任务 {task_id} 已重试[/green]")
 
-    new_job_id = data.get("job_id", job_id)
-    console.print(f"[green]任务 {job_id} 已重试，新任务 ID: {new_job_id}[/green]")
-
-    if wait and new_job_id:
-        console.print(f"[cyan]等待任务 {new_job_id} 完成...[/cyan]")
+    if wait:
+        console.print(f"[cyan]等待任务完成...[/cyan]")
         final = client.wait_for_status(
-            DETAIL_PATH,
-            target_statuses=["succeeded", "failed", "stopped"],
+            TASK_PATH,
+            target_statuses=["completed", "failed", "stopped"],
             failure_statuses=["failed", "stopped"],
-            status_key="status",
+            status_key="task_status",
             workspace_id=workspace,
-            job_id=new_job_id,
+            task_id=task_id,
         )
-        console.print(f"[green]任务完成，最终状态: {final.get('status')}[/green]")
+        console.print(f"[green]最终状态: {final.get('task_status')}[/green]")
 
 
 @app.command("delete")
-def delete_job(
-    job_id: str = typer.Argument(help="任务 ID"),
+def delete_task(
+    task_ids: list[str] = typer.Argument(help="训练任务 ID（可传多个）"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
 ):
-    """删除训练任务"""
-    if not yes:
-        if not typer.confirm(f"确认删除任务 {job_id}?"):
-            raise typer.Abort()
-
+    """批量删除训练任务 (3.13.9)"""
+    if not yes and not typer.confirm(f"确认删除 {len(task_ids)} 个任务?"):
+        raise typer.Abort()
     client = PanguClient()
-    client.delete(DETAIL_PATH, workspace_id=workspace, job_id=job_id)
-    console.print(f"[green]任务 {job_id} 已删除[/green]")
+    id_list = ",".join(task_ids)
+    data = client.delete(TASKS_PATH, workspace_id=workspace, params={"train_task_id_list": id_list})
+    console.print(f"[green]成功删除: {data.get('success_num', '?')} 个，失败: {data.get('failed_num', '?')} 个[/green]")
 
 
 @app.command("logs")
-def job_logs(
-    job_id: str = typer.Argument(help="任务 ID"),
+def task_logs(
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    step: Optional[str] = typer.Option(None, "--step", help="训练步骤 (e.g. train/eval)"),
-    node_id: Optional[str] = typer.Option(None, "--node-id", help="节点 ID"),
-    lines: int = typer.Option(100, "--lines", "-n", help="返回行数"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID（从 get 详情获取）"),
+    job_id: Optional[str] = typer.Option(None, "--job-id", help="步骤 Job ID（从 steps_execution 获取）"),
+    node: str = typer.Option("worker-0", "--node", help="节点名称，如 worker-0"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询训练任务日志"""
-    client = PanguClient()
-    path = DETAIL_PATH + "/logs"
-    params: dict = {"lines": lines}
-    if step:
-        params["step"] = step
-    if node_id:
-        params["node_id"] = node_id
+    """查看训练日志 (3.13.4)
 
-    data = client.get(path, workspace_id=workspace, params=params, job_id=job_id)
+    需要先通过 pangu training get <task_id> 获取 execution_id 和 steps_execution 中的 job_id。
+    """
+    if not execution_id or not job_id:
+        console.print("[yellow]正在自动获取 execution_id 和 job_id...[/yellow]")
+        client = PanguClient()
+        detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
+        if not execution_id:
+            execution_id = detail.get("execution_id", "")
+        if not job_id:
+            # 从 steps_execution 中提取第一个 job_id
+            import json as _json
+            steps = detail.get("steps_execution", "")
+            if isinstance(steps, str) and steps:
+                try:
+                    steps = _json.loads(steps)
+                except Exception:
+                    steps = {}
+            if isinstance(steps, dict):
+                for step_name, step_info in steps.items():
+                    if isinstance(step_info, dict) and step_info.get("job_id"):
+                        job_id = step_info["job_id"]
+                        console.print(f"  使用步骤 [{step_name}] job_id: {job_id}")
+                        break
+
+    if not execution_id or not job_id:
+        console.print("[red]无法获取 execution_id 或 job_id，请通过 --execution-id 和 --job-id 手动指定[/red]")
+        raise typer.Exit(1)
+
+    client = PanguClient()
+    path = BASE + "/execution/{execution_id}/training-jobs/{job_id}/tasks/{log_task_id}/preview"
+    data = client.get(path, workspace_id=workspace, execution_id=execution_id, job_id=job_id, log_task_id=node)
     output(data, fmt=fmt)
 
 
 @app.command("nodes")
-def job_nodes(
-    job_id: str = typer.Argument(help="任务 ID"),
+def task_nodes(
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
-):
-    """查询训练任务节点列表"""
-    client = PanguClient()
-    path = DETAIL_PATH + "/nodes"
-    data = client.get(path, workspace_id=workspace, job_id=job_id)
-
-    columns = [
-        ("node_id", "节点 ID"),
-        ("node_name", "节点名"),
-        ("status", "状态"),
-        ("ip", "IP"),
-        ("device_type", "设备类型"),
-    ]
-    output(data, fmt=fmt, columns=columns, list_key="nodes", title="训练节点", status_key="status")
-
-
-@app.command("node-logs")
-def node_logs(
-    job_id: str = typer.Argument(help="任务 ID"),
-    node_id: str = typer.Argument(help="节点 ID"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    lines: int = typer.Option(100, "--lines", "-n", help="返回行数"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID"),
+    job_id: Optional[str] = typer.Option(None, "--job-id", help="步骤 Job ID"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询指定节点日志"""
+    """查看训练节点信息 (3.13.6)"""
+    if not execution_id or not job_id:
+        client = PanguClient()
+        detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
+        if not execution_id:
+            execution_id = detail.get("execution_id", "")
+        if not job_id:
+            import json as _json
+            steps = detail.get("steps_execution", "")
+            if isinstance(steps, str) and steps:
+                try:
+                    steps = _json.loads(steps)
+                except Exception:
+                    steps = {}
+            if isinstance(steps, dict):
+                for step_info in steps.values():
+                    if isinstance(step_info, dict) and step_info.get("job_id"):
+                        job_id = step_info["job_id"]
+                        break
+
+    if not execution_id or not job_id:
+        console.print("[red]请通过 --execution-id 和 --job-id 手动指定[/red]")
+        raise typer.Exit(1)
+
     client = PanguClient()
-    path = DETAIL_PATH + "/nodes/{node_id}/logs"
-    data = client.get(path, workspace_id=workspace, params={"lines": lines}, job_id=job_id, node_id=node_id)
+    path = BASE + "/execution/{execution_id}/training-jobs/{job_id}"
+    data = client.get(path, workspace_id=workspace, execution_id=execution_id, job_id=job_id)
     output(data, fmt=fmt)
 
 
 @app.command("metrics")
-def job_metrics(
-    job_id: str = typer.Argument(help="任务 ID"),
+def task_metrics(
+    task_id: str = typer.Argument(help="训练任务 ID"),
+    model_type: str = typer.Option(..., "--model-type", help="模型类型: NLP|MM|CV|Predict|AI4Science"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    metric_name: Optional[str] = typer.Option(None, "--metric", "-m", help="指标名称"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询训练指标 (loss/accuracy 等)"""
-    client = PanguClient()
-    path = DETAIL_PATH + "/metrics"
-    params = {}
-    if metric_name:
-        params["metric_name"] = metric_name
+    """查看训练指标 (3.13.1)"""
+    if not execution_id:
+        client = PanguClient()
+        detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
+        execution_id = detail.get("execution_id", "")
 
-    data = client.get(path, workspace_id=workspace, params=params or None, job_id=job_id)
+    if not execution_id:
+        console.print("[red]无法获取 execution_id，请通过 --execution-id 手动指定[/red]")
+        raise typer.Exit(1)
+
+    client = PanguClient()
+    path = BASE + "/executions/{execution_id}/metric"
+    data = client.get(path, workspace_id=workspace, params={"model_type": model_type}, execution_id=execution_id)
     output(data, fmt=fmt)
 
 
 @app.command("checkpoints")
-def job_checkpoints(
-    job_id: str = typer.Argument(help="任务 ID"),
+def task_checkpoints(
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询训练 Checkpoint 列表"""
-    client = PanguClient()
-    path = DETAIL_PATH + "/checkpoints"
-    data = client.get(path, workspace_id=workspace, job_id=job_id)
+    """查看断点 Checkpoint 列表 (3.13.10)"""
+    if not execution_id:
+        client = PanguClient()
+        detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
+        execution_id = detail.get("execution_id", "")
 
-    columns = [
-        ("checkpoint_id", "Checkpoint ID"),
-        ("step", "训练步数"),
-        ("obs_path", "OBS 路径"),
-        ("create_time", "创建时间"),
-    ]
-    output(data, fmt=fmt, columns=columns, list_key="checkpoints", title="Checkpoint 列表")
+    if not execution_id:
+        console.print("[red]无法获取 execution_id，请通过 --execution-id 手动指定[/red]")
+        raise typer.Exit(1)
+
+    client = PanguClient()
+    path = BASE + "/execution/{execution_id}/checkpoints"
+    data = client.get(path, workspace_id=workspace, execution_id=execution_id)
+    output(data, fmt=fmt)
 
 
 @app.command("publish")
 def publish_model(
-    job_id: str = typer.Argument(help="任务 ID"),
+    task_id: str = typer.Argument(help="训练任务 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    checkpoint_id: Optional[str] = typer.Option(None, "--checkpoint-id", help="Checkpoint ID (不传则用最新)"),
-    asset_name: Optional[str] = typer.Option(None, "--asset-name", help="发布后的模型资产名称"),
-    description: Optional[str] = typer.Option(None, "--description", "-d", help="描述"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID"),
+    model_id: Optional[str] = typer.Option(None, "--model-id", help="模型 ID"),
+    asset_name: Optional[str] = typer.Option(None, "--asset-name", help="发布的资产名称"),
+    description: str = typer.Option("", "--description", "-d", help="描述"),
+    visibility: str = typer.Option("current", "--visibility", help="可见性: current|all"),
+    category: str = typer.Option("3rd", "--category", help="模型来源: pangu|3rd"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """将训练结果发布为模型资产"""
+    """发布训练模型到资产中心 (3.13.7)"""
     client = PanguClient()
-    path = DETAIL_PATH + "/publish"
-    body: dict = {}
-    if checkpoint_id:
-        body["checkpoint_id"] = checkpoint_id
+
+    if not execution_id or not model_id:
+        detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
+        if not execution_id:
+            execution_id = detail.get("execution_id", "")
+        if not model_id:
+            model_id = detail.get("model_id", "")
+
+    if not execution_id or not model_id:
+        console.print("[red]请通过 --execution-id 和 --model-id 手动指定[/red]")
+        raise typer.Exit(1)
+
+    body: dict = {
+        "execution_id": execution_id,
+        "model_id": model_id,
+        "description": description,
+        "visibility": visibility,
+        "category": category,
+    }
     if asset_name:
         body["asset_name"] = asset_name
-    if description:
-        body["description"] = description
 
-    data = client.post(path, workspace_id=workspace, json=body, job_id=job_id)
+    data = client.post(PUBLISH_PATH, workspace_id=workspace, json=body)
     output(data, fmt=fmt)
-    console.print("[green]模型发布任务已创建[/green]")
+    console.print("[green]模型已发布到资产中心[/green]")
 
 
-@app.command("versions")
-def list_versions(
-    job_id: str = typer.Argument(help="任务 ID"),
+@app.command("models")
+def list_models(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    model_type: Optional[str] = typer.Option(None, "--model-type", help="NLP|MM|CV|Predict|AI4Science"),
+    action_type: Optional[str] = typer.Option(None, "--action-type", help="PRETRAIN|SFT|LORA|QUANTIZATION|DPO"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
-    """查询训练任务的历史版本列表"""
+    """查看已发布的训练模型列表 (3.13.8)"""
     client = PanguClient()
-    data = client.get(VERSIONS_PATH, workspace_id=workspace, job_id=job_id)
+    params: dict = {}
+    if model_type:  params["model_type"] = model_type
+    if action_type: params["action_type"] = action_type
 
-    output(
-        data,
-        fmt=fmt,
-        columns=VERSION_COLUMNS,
-        list_key="versions",
-        title=f"训练版本 ({job_id})",
-        status_key="status",
-        id_key="version_id",
-    )
+    data = client.get(MODELS_PATH, workspace_id=workspace, params=params or None)
+    output(data, fmt=fmt, columns=MODEL_COLUMNS, list_key="models", title="已发布模型", status_key="status", id_key="model_id")
 
 
 @app.command("usage")
-def job_usage(
-    job_id: str = typer.Argument(help="任务 ID"),
+def task_usage(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    start_time: Optional[str] = typer.Option(None, "--start-time", help="开始时间 (如 2024-01-01T00:00:00)"),
+    end_time: Optional[str] = typer.Option(None, "--end-time", help="结束时间"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询训练任务资源用量"""
+    """查询训练任务资源用量 (3.13.12)"""
     client = PanguClient()
-    path = DETAIL_PATH + "/resource-usage"
-    data = client.get(path, workspace_id=workspace, job_id=job_id)
+    params: dict = {}
+    if start_time: params["start_time"] = start_time
+    if end_time:   params["end_time"] = end_time
+
+    data = client.get(USAGE_PATH, workspace_id=workspace, params=params or None)
     output(data, fmt=fmt)
 
 
 @app.command("running")
-def running_jobs(
+def running_tasks(
+    pool_id: str = typer.Argument(help="资源池 ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+    node_ip: Optional[str] = typer.Option(None, "--node-ip", help="资源池节点 IP"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询当前正在运行的训练任务"""
+    """查询指定资源池上运行的训练任务 (3.13.13)"""
     client = PanguClient()
-    params = {"status": "running", "limit": 100, "offset": 0}
-    data = client.get(BASE_PATH, workspace_id=workspace, params=params)
-    output(
-        data,
-        fmt=fmt,
-        columns=LIST_COLUMNS,
-        list_key="jobs",
-        title="运行中的训练任务",
-        status_key="status",
-        id_key="job_id",
-    )
+    params: dict = {"pool_id": pool_id}
+    if node_ip: params["node_ip"] = node_ip
+
+    data = client.get(RUNNING_PATH, workspace_id=workspace, params=params)
+    output(data, fmt=fmt)

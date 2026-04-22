@@ -357,40 +357,67 @@ pangu training running <pool_id>
 
 ### 数据集管理
 
+> 数据集主键为 `数据集名称 + catalog`（ORIGINAL 原始 / PROCESS 加工 / PUBLISH 发布）。
+> 列表走 v2 接口，返回 `id` 字段作为 UUID；删除、发布、加工均按 `name + catalog` 操作。
+
 ```bash
-# 查询列表
+# 查询列表（默认 20 条，显示总数与分页提示）
 pangu dataset list
-pangu dataset list --type text --status ready
+pangu dataset list --catalog ORIGINAL --modal TEXT --status ONLINE
+pangu dataset list --name keyword --creator admin
 
-# 查看详情
-pangu dataset get <dataset_id>
+# 分页：第 2 页（每页 50 条）
+pangu dataset list --limit 50 --page 2
 
-# 删除
-pangu dataset delete <dataset_id>
-pangu dataset purge <dataset_id>   # 彻底清除，不可恢复
+# 拉取全部（适合脚本 / skill 场景）
+pangu dataset list --all -o json
 
-# 从 OBS 导入数据
-pangu dataset import <dataset_id> --obs-path obs://my-bucket/data/
-pangu dataset import <dataset_id> -f examples/dataset_import.yaml --wait
+# 按创建者过滤 + 仅看我的
+pangu dataset list --mine --sort-by create_time --sort-type desc
 
-# 发布版本
-pangu dataset publish <dataset_id> --version-name v1.0
+# 查看详情（按名称+类别）
+pangu dataset get <dataset_name> --catalog ORIGINAL
 
-# 查询已发布版本
-pangu dataset publish-list <dataset_id>
+# 按 ID 批量查询
+pangu dataset get-by-ids <id1> <id2> <id3>
 
-# 删除已发布版本
-pangu dataset publish-delete <dataset_id> <annotation_id>
+# 批量软删除（可恢复）
+pangu dataset delete <name1> <name2> --catalog ORIGINAL
+pangu dataset delete <name> -y              # 跳过确认
 
-# 数据处理
-pangu dataset process <dataset_id> --operator text_clean
-pangu dataset process <dataset_id> -f examples/dataset_process.yaml --wait
+# 彻底清除（不可恢复，可同时删除 OBS 源文件）
+pangu dataset purge <name> --catalog ORIGINAL
+pangu dataset purge <name> --delete-obs -y
 
-# 查询可用算子
+# 从 OBS 导入数据（name / obs-path / content-type 必填）
+pangu dataset import \
+  --name my-dataset \
+  --obs-path obs://my-bucket/data/ \
+  --content-type PRE_TRAINED_TEXT \
+  --file-format JSONL
+
+# 用 YAML 配置导入并等待完成
+pangu dataset import -f examples/dataset_import.yaml --wait
+
+# 发布数据集（命令行）
+pangu dataset publish \
+  --publish-name my-pub-v1 \
+  --source-name my-dataset \
+  --source-catalog ORIGINAL \
+  --file-content-type SINGLE_QA
+
+# 发布数据集（YAML 混合，配置文件覆盖命令行默认值）
+pangu dataset publish --publish-name v1 --source-name ds --file-content-type SINGLE_QA -f publish.yaml
+
+# 数据加工（task_operators 字段较多，必须走 YAML）
+pangu dataset process --source-name my-dataset -f examples/dataset_process.yaml
+
+# 查询可用算子（嵌套结构：一级分类 → 二级分类 → 算子）
 pangu dataset operators
+pangu dataset operators --catalog SYS --modal TEXT --category DL
 
-# 数据血缘
-pangu dataset lineage <dataset_id>
+# 数据血缘（按来源 OBS 路径查询）
+pangu dataset lineage obs://my-bucket/raw/ --limit 100
 ```
 
 ---

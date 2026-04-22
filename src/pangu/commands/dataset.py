@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 import yaml
@@ -15,56 +15,143 @@ from pangu.output import output
 app = typer.Typer(help="数据集管理")
 console = Console()
 
-BASE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/datasets"
-DETAIL_PATH = BASE_PATH + "/{dataset_id}"
-PUBLISH_PATH = BASE_PATH + "/{dataset_id}/data-annotations"
-OPERATORS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/operators"
-PROCESS_PATH = BASE_PATH + "/{dataset_id}/data-processes"
+# v2 列表接口（带分页、过滤、总数）
+LIST_PATH        = "/v2/{project_id}/workspaces/{workspace_id}/data-management/datasets"
+# v2 详情
+DETAIL_PATH_V2   = "/v2/{project_id}/workspaces/{workspace_id}/data-management/datasets/{dataset_name}"
+# 批量查询
+BATCH_GET_PATH   = "/v1/{project_id}/workspaces/{workspace_id}/data-management/datasets"
+# 批量删除（软删）
+BATCH_DELETE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/batch-delete"
+# 彻底删除
+PERM_DELETE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/permanent-delete"
+# 数据血缘
+LINEAGE_PATH     = "/v1/{project_id}/workspaces/{workspace_id}/data-management/lineages"
+# 数据导入任务
+IMPORT_JOBS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-extraction/import-jobs"
+# 数据发布任务
+PUBLISH_JOBS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-publish/jobs"
+# 数据加工任务
+PROCESS_JOBS_PATH = "/v2/{project_id}/workspaces/{workspace_id}/data-cleaning/jobs"
+# 算子列表
+OPERATORS_PATH   = "/v1/{project_id}/workspaces/{workspace_id}/operator-manager/operator-list"
+
 
 LIST_COLUMNS = [
-    ("dataset_id", "数据集 ID"),
-    ("name", "名称"),
-    ("type", "类型"),
-    ("status", "状态"),
-    ("sample_count", "样本数"),
-    ("create_time", "创建时间"),
+    ("id",           "数据集 ID"),
+    ("name",         "名称"),
+    ("catalog",      "类别"),
+    ("modal",        "模态"),
+    ("content_type", "内容类型"),
+    ("status",       "状态"),
+    ("record_num",   "样本数"),
+    ("size",         "大小(Byte)"),
+    ("create_time",  "创建时间"),
 ]
 
 DETAIL_FIELDS = [
-    ("dataset_id", "数据集 ID"),
-    ("name", "名称"),
-    ("type", "类型"),
-    ("status", "状态"),
-    ("description", "描述"),
-    ("sample_count", "样本数"),
-    ("managed", "是否托管"),
-    ("obs_path", "OBS 路径"),
-    ("create_time", "创建时间"),
-    ("update_time", "更新时间"),
+    ("dataset_id",   "数据集 ID"),
+    ("name",         "名称"),
+    ("catalog",      "类别"),
+    ("status",       "状态"),
+    ("dataset_desc", "描述"),
+    ("modal",        "模态"),
+    ("content_type", "内容类型"),
+    ("file_format",  "文件格式"),
+    ("file_source",  "文件来源"),
+    ("record_num",   "样本数"),
+    ("file_num",     "文件数"),
+    ("size",         "大小(Byte)"),
+    ("sample_path",  "OBS 路径"),
+    ("creator",      "创建人"),
+    ("create_time",  "创建时间"),
+    ("update_time",  "更新时间"),
+    ("is_global",    "全空间可见"),
+    ("industry",     "行业"),
+    ("language",     "语言"),
 ]
 
+
+# ------------------------------ list ------------------------------
 
 @app.command("list")
 def list_datasets(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    dataset_type: Optional[str] = typer.Option(None, "--type", "-t", help="数据集类型: text/image/audio/video/table"),
-    name: Optional[str] = typer.Option(None, "--name", help="按名称搜索"),
-    status: Optional[str] = typer.Option(None, "--status", help="状态过滤"),
-    limit: int = typer.Option(20, "--limit", help="每页数量"),
+    catalog: Optional[str] = typer.Option(None, "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH"),
+    name: Optional[str] = typer.Option(None, "--name", help="按名称模糊搜索"),
+    status: Optional[List[str]] = typer.Option(None, "--status", help="状态: ONLINE | OFFLINE，可多次传入"),
+    content_type: Optional[List[str]] = typer.Option(None, "--content-type", help="内容类型，可多次传入"),
+    modal: Optional[str] = typer.Option(None, "--modal", help="模态: TEXT/IMAGE/VIDEO/AUDIO/OTHER"),
+    file_source: Optional[str] = typer.Option(None, "--file-source", help="文件来源: OBS/LOCAL/GALLERY"),
+    file_format: Optional[str] = typer.Option(None, "--file-format", help="文件格式"),
+    creator: Optional[str] = typer.Option(None, "--creator", help="创建人，模糊搜索"),
+    mine: bool = typer.Option(False, "--mine", help="只看我创建的"),
+    show_deleted: bool = typer.Option(False, "--show-deleted", help="包含已删除"),
+    sort_by: str = typer.Option("create_time", "--sort-by", help="排序字段: create_time | size | record_num"),
+    sort_type: str = typer.Option("desc", "--sort-type", help="排序方向: asc | desc"),
+    limit: int = typer.Option(20, "--limit", help="每页数量 (1-1000)"),
     offset: int = typer.Option(0, "--offset", help="起始偏移"),
+    page: Optional[int] = typer.Option(None, "--page", help="页码，从 1 开始，优先级高于 offset"),
+    all_pages: bool = typer.Option(False, "--all", help="自动翻页拉取全部结果"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table/json/yaml/id"),
 ):
-    """查询数据集列表"""
+    """查询数据集列表（v2 接口，支持分页、过滤、一键拉全量）"""
     client = PanguClient()
-    params: dict = {"limit": limit, "offset": offset}
-    if dataset_type:
-        params["type"] = dataset_type
-    if name:
-        params["name"] = name
-    if status:
-        params["status"] = status
 
-    data = client.get(BASE_PATH, workspace_id=workspace, params=params)
+    if page is not None:
+        if page < 1:
+            console.print("[red]--page 必须 >= 1[/red]")
+            raise typer.Exit(1)
+        offset = (page - 1) * limit
+
+    def _params(off: int, lim: int) -> dict:
+        p: dict = {
+            "limit":     lim,
+            "offset":    off,
+            "sort_by":   sort_by,
+            "sort_type": sort_type,
+            "mine":      str(mine).lower(),
+            "show_deleted": str(show_deleted).lower(),
+        }
+        if catalog:       p["catalog"] = catalog
+        if name:          p["name"] = name
+        if status:        p["status"] = status
+        if content_type:  p["content_type"] = content_type
+        if modal:         p["modal"] = modal
+        if file_source:   p["file_source"] = file_source
+        if file_format:   p["file_format"] = file_format
+        if creator:       p["creator"] = creator
+        return p
+
+    if all_pages:
+        # 翻页拉取全量
+        items: list = []
+        cur = 0
+        page_size = max(100, limit)  # 翻页时用较大批次减少请求数
+        total = None
+        while True:
+            resp = client.get(LIST_PATH, workspace_id=workspace, params=_params(cur, page_size))
+            batch = resp.get("datasets") or []
+            items.extend(batch)
+            total = resp.get("count", total)
+            cur += len(batch)
+            if not batch or (total is not None and cur >= total):
+                break
+            if len(batch) < page_size:
+                break
+        console.print(f"[cyan]共拉取 {len(items)} 条 (total={total})[/cyan]")
+        data = {"datasets": items, "count": len(items)}
+    else:
+        data = client.get(LIST_PATH, workspace_id=workspace, params=_params(offset, limit))
+        total = data.get("count", 0)
+        shown = len(data.get("datasets") or [])
+        if fmt == "table":
+            console.print(
+                f"[cyan]显示 {shown} 条 / 共 {total} 条  "
+                f"(limit={limit}, offset={offset})  "
+                f"→ 使用 --page N 翻页，或 --all 拉取全部[/cyan]"
+            )
+
     output(
         data,
         fmt=fmt,
@@ -72,246 +159,277 @@ def list_datasets(
         list_key="datasets",
         title="数据集",
         status_key="status",
-        id_key="dataset_id",
+        id_key="id",
     )
 
 
+# ------------------------------ get ------------------------------
+
 @app.command("get")
 def get_dataset(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
+    dataset_name: str = typer.Argument(help="数据集名称"),
+    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH (必填)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
-    """查询数据集详情"""
+    """查询数据集详情（按名称+类别）"""
     client = PanguClient()
-    data = client.get(DETAIL_PATH, workspace_id=workspace, dataset_id=dataset_id)
+    data = client.get(
+        DETAIL_PATH_V2,
+        workspace_id=workspace,
+        params={"catalog": catalog},
+        dataset_name=dataset_name,
+    )
     output(
         data,
         fmt=fmt,
         detail_fields=DETAIL_FIELDS,
-        title=f"数据集: {data.get('name', '')}",
+        title=f"数据集: {data.get('name', dataset_name)}",
         status_key="status",
     )
 
 
+@app.command("get-by-ids")
+def batch_get(
+    dataset_ids: List[str] = typer.Argument(help="数据集 ID 列表，可传多个"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+):
+    """按 ID 批量查询数据集详情"""
+    client = PanguClient()
+    data = client.post(
+        BATCH_GET_PATH,
+        workspace_id=workspace,
+        json={"dataset_ids": list(dataset_ids)},
+    )
+    output(
+        data,
+        fmt=fmt,
+        columns=LIST_COLUMNS,
+        list_key="datasets",
+        title=f"批量查询结果 (共 {data.get('total_count', 0)} 条)",
+        status_key="status",
+        id_key="dataset_id",
+    )
+
+
+# ------------------------------ delete ------------------------------
+
 @app.command("delete")
-def delete_dataset(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
+def delete_datasets(
+    dataset_names: List[str] = typer.Argument(help="数据集名称，可传多个"),
+    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """删除数据集"""
+    """批量删除数据集（软删除，可恢复）"""
     if not yes:
-        if not typer.confirm(f"确认删除数据集 {dataset_id}?"):
+        if not typer.confirm(f"确认删除 {len(dataset_names)} 个数据集 (catalog={catalog})?"):
             raise typer.Abort()
 
+    body = {"datasets": [{"dataset_name": n, "catalog": catalog} for n in dataset_names]}
     client = PanguClient()
-    client.delete(DETAIL_PATH, workspace_id=workspace, dataset_id=dataset_id)
-    console.print(f"[green]数据集 {dataset_id} 已删除[/green]")
+    data = client.post(BATCH_DELETE_PATH, workspace_id=workspace, json=body)
+    output(data, fmt=fmt)
+    console.print(f"[green]已提交删除 {len(dataset_names)} 个数据集[/green]")
 
 
 @app.command("purge")
 def purge_dataset(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
+    dataset_name: str = typer.Argument(help="数据集名称"),
+    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认 (将彻底删除数据)"),
+    delete_obs: bool = typer.Option(False, "--delete-obs", help="同时删除 OBS 源文件"),
+    yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
 ):
-    """彻底清除数据集及其所有数据 (不可恢复)"""
+    """彻底清除数据集（不可恢复）"""
     if not yes:
-        if not typer.confirm(f"[警告] 彻底清除数据集 {dataset_id} 的所有数据? 此操作不可恢复!"):
+        msg = f"[警告] 彻底清除数据集 {dataset_name} (catalog={catalog})"
+        if delete_obs:
+            msg += " 并删除 OBS 源文件"
+        msg += "? 此操作不可恢复!"
+        if not typer.confirm(msg):
             raise typer.Abort()
 
+    body = {
+        "dataset_name": dataset_name,
+        "catalog":      catalog,
+        "delete_obs":   delete_obs,
+    }
     client = PanguClient()
-    path = DETAIL_PATH + "/purge"
-    client.post(path, workspace_id=workspace, json={}, dataset_id=dataset_id)
-    console.print(f"[green]数据集 {dataset_id} 已彻底清除[/green]")
+    client.post(PERM_DELETE_PATH, workspace_id=workspace, json=body)
+    console.print(f"[green]数据集 {dataset_name} 已彻底清除[/green]")
 
+
+# ------------------------------ import ------------------------------
 
 @app.command("import")
 def import_data(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    name: Optional[str] = typer.Option(None, "--name", help="数据集名称（必填，可来自配置文件）"),
     obs_path: Optional[str] = typer.Option(None, "--obs-path", help="OBS 数据路径"),
-    import_type: str = typer.Option("obs", "--import-type", help="导入类型: obs/local"),
+    content_type: Optional[str] = typer.Option(None, "--content-type", help="内容类型，如 PRE_TRAINED_TEXT/SINGLE_QA 等"),
+    file_source: str = typer.Option("OBS", "--file-source", help="文件来源: OBS | LOCAL | GALLERY"),
+    file_format: Optional[str] = typer.Option(None, "--file-format", help="文件格式: JSONL/CSV/PDF 等"),
+    desc: Optional[str] = typer.Option(None, "--desc", help="数据集描述"),
     config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待导入完成"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """从 OBS 路径导入数据到数据集"""
+    """创建数据导入任务"""
     client = PanguClient()
-    path = DETAIL_PATH + "/import-tasks"
 
-    body: dict = {"import_type": import_type}
+    body: dict = {}
     if config:
         p = Path(config)
         if not p.exists():
             console.print(f"[red]配置文件不存在: {config}[/red]")
             raise typer.Exit(1)
-        with p.open() as f:
+        with p.open(encoding="utf-8") as f:
             body.update(yaml.safe_load(f) or {})
 
-    if obs_path:
-        body["obs_path"] = obs_path
+    # 命令行参数覆盖配置文件
+    if name:          body["name"] = name
+    if obs_path:      body["obs_path"] = obs_path
+    if content_type:  body["content_type"] = content_type
+    if file_source:   body.setdefault("file_source", file_source)
+    if file_format:   body["file_format"] = file_format
+    if desc:          body["desc"] = desc
 
-    if not body.get("obs_path"):
-        console.print("[red]必须提供 OBS 路径 (--obs-path 或配置文件中 obs_path)[/red]")
+    missing = [k for k in ("name", "obs_path", "content_type") if not body.get(k)]
+    if missing:
+        console.print(f"[red]缺少必填项: {', '.join(missing)}[/red]")
         raise typer.Exit(1)
 
-    data = client.post(path, workspace_id=workspace, json=body, dataset_id=dataset_id)
-    task_id = data.get("task_id", "")
+    data = client.post(IMPORT_JOBS_PATH, workspace_id=workspace, json=body)
+    job_id = data.get("id", "")
     output(data, fmt=fmt)
-    console.print(f"[green]导入任务已创建: {task_id}[/green]")
+    console.print(f"[green]导入任务已创建: {job_id}[/green]")
 
-    if wait and task_id:
-        status_path = DETAIL_PATH + f"/import-tasks/{task_id}"
-        console.print(f"[cyan]等待导入完成...[/cyan]")
+    if wait and job_id:
+        status_path = IMPORT_JOBS_PATH + f"/{job_id}"
+        console.print("[cyan]等待导入完成...[/cyan]")
         final = client.wait_for_status(
             status_path,
-            target_statuses=["succeeded", "failed"],
-            failure_statuses=["failed"],
+            target_statuses=["SUCCESS"],
+            failure_statuses=["FAILED", "STOPPED"],
             status_key="status",
             workspace_id=workspace,
-            dataset_id=dataset_id,
         )
         console.print(f"[green]导入完成，状态: {final.get('status')}[/green]")
 
 
+# ------------------------------ publish ------------------------------
+
 @app.command("publish")
 def publish_dataset(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    version_name: Optional[str] = typer.Option(None, "--version-name", help="版本名称"),
-    description: Optional[str] = typer.Option(None, "--description", "-d", help="版本描述"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
-):
-    """发布数据集为新版本"""
-    client = PanguClient()
-    body: dict = {}
-    if version_name:
-        body["version_name"] = version_name
-    if description:
-        body["description"] = description
-
-    data = client.post(PUBLISH_PATH, workspace_id=workspace, json=body, dataset_id=dataset_id)
-    output(data, fmt=fmt)
-    console.print("[green]数据集版本发布成功[/green]")
-
-
-@app.command("publish-list")
-def list_published(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    limit: int = typer.Option(20, "--limit", help="每页数量"),
-    offset: int = typer.Option(0, "--offset", help="起始偏移"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
-):
-    """查询数据集已发布版本列表"""
-    client = PanguClient()
-    params = {"limit": limit, "offset": offset}
-    data = client.get(PUBLISH_PATH, workspace_id=workspace, params=params, dataset_id=dataset_id)
-
-    columns = [
-        ("annotation_id", "版本 ID"),
-        ("version_name", "版本名"),
-        ("status", "状态"),
-        ("sample_count", "样本数"),
-        ("create_time", "创建时间"),
-    ]
-    output(data, fmt=fmt, columns=columns, list_key="annotations", title=f"数据集版本 ({dataset_id})", status_key="status")
-
-
-@app.command("publish-delete")
-def delete_published(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
-    annotation_id: str = typer.Argument(help="版本 ID"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
-):
-    """删除数据集已发布版本"""
-    if not yes:
-        if not typer.confirm(f"确认删除版本 {annotation_id}?"):
-            raise typer.Abort()
-
-    client = PanguClient()
-    path = PUBLISH_PATH + "/{annotation_id}"
-    client.delete(path, workspace_id=workspace, dataset_id=dataset_id, annotation_id=annotation_id)
-    console.print(f"[green]版本 {annotation_id} 已删除[/green]")
-
-
-@app.command("process")
-def process_dataset(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    operator: Optional[str] = typer.Option(None, "--operator", help="算子名称"),
+    publish_name: str = typer.Option(..., "--publish-name", help="发布后数据集名称（必填）"),
+    source_name: str = typer.Option(..., "--source-name", help="来源数据集名称（必填）"),
+    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别"),
+    file_content_type: str = typer.Option(..., "--file-content-type", help="内容类型，如 SINGLE_QA 等（必填）"),
+    publish_format: Optional[str] = typer.Option(None, "--publish-format", help="发布格式: DEFAULT | PANGU | USER_DEFINED"),
+    is_global: bool = typer.Option(False, "--global", help="全空间可见"),
+    description: Optional[str] = typer.Option(None, "--description", "-d", help="描述"),
     config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径"),
-    wait: bool = typer.Option(False, "--wait", help="等待处理完成"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """对数据集执行数据处理任务"""
+    """发布数据集（创建数据发布任务）"""
     client = PanguClient()
-    body: dict = {}
+
+    body: dict = {
+        "job_type":          "CIRCULATION",
+        "publish_name":      publish_name,
+        "file_content_type": file_content_type,
+        "is_global":         is_global,
+        "datasets": [{
+            "dataset_name": source_name,
+            "catalog":      source_catalog,
+        }],
+    }
+    if description:    body["description"] = description
+    if publish_format: body["publish_format"] = publish_format
 
     if config:
         p = Path(config)
         if not p.exists():
             console.print(f"[red]配置文件不存在: {config}[/red]")
             raise typer.Exit(1)
-        with p.open() as f:
+        with p.open(encoding="utf-8") as f:
             body.update(yaml.safe_load(f) or {})
 
-    if operator:
-        body.setdefault("operators", [{"operator_name": operator}])
-
-    data = client.post(PROCESS_PATH, workspace_id=workspace, json=body, dataset_id=dataset_id)
-    task_id = data.get("task_id", "")
+    data = client.post(PUBLISH_JOBS_PATH, workspace_id=workspace, json=body)
     output(data, fmt=fmt)
-    console.print(f"[green]数据处理任务已创建: {task_id}[/green]")
+    console.print(f"[green]发布任务已创建: {data.get('id', '')}[/green]")
 
-    if wait and task_id:
-        status_path = PROCESS_PATH + f"/{task_id}"
-        console.print("[cyan]等待处理完成...[/cyan]")
-        final = client.wait_for_status(
-            status_path,
-            target_statuses=["succeeded", "failed"],
-            failure_statuses=["failed"],
-            status_key="status",
-            workspace_id=workspace,
-            dataset_id=dataset_id,
-        )
-        console.print(f"[green]处理完成，状态: {final.get('status')}[/green]")
+
+# ------------------------------ process ------------------------------
+
+@app.command("process")
+def process_dataset(
+    source_name: str = typer.Option(..., "--source-name", help="待加工数据集名称（必填）"),
+    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别: ORIGINAL | PROCESS | PUBLISH"),
+    operator_catalog: str = typer.Option("SYS", "--operator-catalog", help="算子类别: SYS | USER"),
+    config: str = typer.Option(..., "--config", "-f", help="YAML 配置文件路径（必填，包含 task_operators 等）"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+):
+    """创建数据加工任务（task_operators 配置项较多，建议走 YAML）"""
+    client = PanguClient()
+
+    p = Path(config)
+    if not p.exists():
+        console.print(f"[red]配置文件不存在: {config}[/red]")
+        raise typer.Exit(1)
+    with p.open(encoding="utf-8") as f:
+        body: dict = yaml.safe_load(f) or {}
+
+    body.setdefault("source_dataset_name", source_name)
+    body.setdefault("source_dataset_catalog", source_catalog)
+    body.setdefault("operator_catalog", operator_catalog)
+
+    if not body.get("task_operators"):
+        console.print("[red]配置文件缺少 task_operators[/red]")
+        raise typer.Exit(1)
+
+    data = client.post(PROCESS_JOBS_PATH, workspace_id=workspace, json=body)
+    output(data, fmt=fmt)
+    console.print(f"[green]加工任务已创建: {data.get('job_id', '')}[/green]")
 
 
 @app.command("operators")
 def list_operators(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    category: Optional[str] = typer.Option(None, "--category", help="算子类别"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
-):
-    """查询可用数据处理算子列表"""
-    client = PanguClient()
-    params = {}
-    if category:
-        params["category"] = category
-
-    data = client.get(OPERATORS_PATH, workspace_id=workspace, params=params or None)
-
-    columns = [
-        ("operator_id", "算子 ID"),
-        ("operator_name", "算子名称"),
-        ("category", "类别"),
-        ("description", "描述"),
-    ]
-    output(data, fmt=fmt, columns=columns, list_key="operators", title="数据处理算子")
-
-
-@app.command("lineage")
-def dataset_lineage(
-    dataset_id: str = typer.Argument(help="数据集 ID"),
+    catalog: Optional[str] = typer.Option(None, "--catalog", help="算子来源: SYS | USER"),
+    modal: Optional[str] = typer.Option(None, "--modal", help="模态"),
+    category: Optional[List[str]] = typer.Option(None, "--category", help="分类: DL/DT/DS/DE/DF/OTHER，可多次传入"),
+    mine: bool = typer.Option(False, "--mine", help="只看我创建的"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """查询数据集血缘关系"""
+    """查询加工算子列表（响应为一级分类→二级分类→算子的嵌套结构）"""
     client = PanguClient()
-    path = DETAIL_PATH + "/lineage"
-    data = client.get(path, workspace_id=workspace, dataset_id=dataset_id)
+    params: dict = {}
+    if catalog:  params["catalog"] = catalog
+    if modal:    params["modal"] = modal
+    if category: params["category"] = category
+    if mine:     params["mine"] = "true"
+
+    data = client.get(OPERATORS_PATH, workspace_id=workspace, params=params or None)
+    output(data, fmt=fmt)
+
+
+# ------------------------------ lineage ------------------------------
+
+@app.command("lineage")
+def dataset_lineage(
+    from_path: str = typer.Argument(help="来源数据集的 OBS 路径"),
+    limit: int = typer.Option(100, "--limit", help="返回血缘数量上限 (1-1000)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+):
+    """查询 OBS 路径关联的数据血缘"""
+    client = PanguClient()
+    params = {"from_path": from_path, "limit": limit}
+    data = client.get(LINEAGE_PATH, workspace_id=workspace, params=params)
     output(data, fmt=fmt)

@@ -1,9 +1,9 @@
-from pangu.adapters.pool.v1 import PoolAdapterV1
-from pangu.adapters.pool.v2 import PoolAdapterV2
+from pangu.adapters.pool.hcs import PoolAdapterHCS
+from pangu.adapters.pool.hc import PoolAdapterHC
 
 _POOL_REGISTRY = {
-    "HCS": PoolAdapterV1,
-    "HC":  PoolAdapterV2,
+    "HCS": PoolAdapterHCS,
+    "HC":  PoolAdapterHC,
 }
 
 

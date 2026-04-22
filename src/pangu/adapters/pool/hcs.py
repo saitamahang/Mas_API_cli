@@ -3,9 +3,9 @@ from __future__ import annotations
 from pangu.adapters.base import PoolAdapter, PoolRequest
 
 
-class PoolAdapterV1(PoolAdapter):
+class PoolAdapterHCS(PoolAdapter):
     """
-    官方标准 API（3.15.1）
+    HCS 环境（标准 API 3.15.1）
     POST /v1/{project_id}/pangu/studio/resource-pool/online/{workspace_id}/pool
     workspace_id 在路径中，响应为深层嵌套结构。
     """

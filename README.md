@@ -96,6 +96,30 @@ pangu config set default_workspace_id ws-new-id
 pangu config set timeout 60
 ```
 
+### 配置登录密码（可选）
+
+配置后执行 `pangu auth login` 无需交互输入密码，适合脚本和 skill 场景。密码以明文存储，注意文件权限。
+
+密码优先级：命令行参数 > 环境变量 `PANGU_PASSWORD` > 配置文件 > 交互输入。
+
+```bash
+pangu config set password your_password
+```
+
+### 切换环境类型
+
+不同环境的 API 路径和响应格式可能不同，通过 `env_type` 切换适配器：
+
+| 环境 | 说明 |
+|------|------|
+| `HCS` | HCS 环境（默认），标准嵌套响应格式 |
+| `HC`  | HC 环境，平铺响应格式，workspace 通过 Header 传递 |
+
+```bash
+pangu config set env_type HC    # 切换到 HC 环境
+pangu config set env_type HCS   # 切换到 HCS 环境（默认）
+```
+
 ### 切换默认工作空间
 
 ```bash
@@ -110,8 +134,12 @@ pangu config use-workspace ws-xxx
 
 ```bash
 pangu auth login
-# 或通过环境变量传入密码（适合 CI/CD）
+
+# 通过环境变量传入密码（适合 CI/CD）
 PANGU_PASSWORD=your_password pangu auth login
+
+# 配置文件中已设置 password 时直接执行，无需交互
+pangu auth login
 ```
 
 Token 有效期 24 小时，自动缓存在 `~/.pangu/token_cache.yaml`，过期前 5 分钟自动提示重新登录。
@@ -157,9 +185,23 @@ pangu workspace delete <workspace_id> -y   # 跳过确认
 
 ### 资源池管理
 
+资源池命令根据 `env_type` 自动选择对应的 API 和解析逻辑。
+
+**HCS 环境**（默认）：
+
 ```bash
 pangu pool list
+pangu pool list --arch ARM
+pangu pool list --job-type Train --status created
 pangu pool list -w <workspace_id>
+```
+
+**HC 环境**（需先 `pangu config set env_type HC`）：
+
+```bash
+# job-type、chip-type、use-type 为 HC 环境 API 必填项
+pangu pool list --job-type train --chip-type D910B3 --use-type private
+pangu pool list --job-type infer --chip-type D910B3 --use-type poc
 ```
 
 ---
@@ -386,6 +428,26 @@ pangu training create -f job.yaml -w ws-other-id
 ```
 
 ---
+
+## 配置项完整说明
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `endpoint` | — | 平台 API 地址 |
+| `iam_endpoint` | — | IAM 认证地址 |
+| `auth_mode` | `token` | 认证模式：`token` \| `apikey` |
+| `username` | — | 用户名（token 模式） |
+| `domain_name` | — | 租户名（token 模式） |
+| `project_name` | — | 项目名称（token 模式） |
+| `project_id` | — | 项目 ID |
+| `default_workspace_id` | — | 默认工作空间 ID |
+| `api_key` | — | API Key（apikey 模式） |
+| `password` | — | 登录密码（可选，明文存储） |
+| `env_type` | `HCS` | 环境类型：`HCS` \| `HC` |
+| `ssl_verify` | `true` | 是否验证 SSL 证书 |
+| `timeout` | `60` | HTTP 请求超时秒数 |
+| `use_system_proxy` | `true` | 是否读取系统代理设置 |
+| `proxy` | — | 显式指定代理地址，如 `http://127.0.0.1:7890` |
 
 ## 配置文件位置
 

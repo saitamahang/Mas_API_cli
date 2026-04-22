@@ -77,23 +77,45 @@ DETAIL_FIELDS = [
 @app.command("list")
 def list_datasets(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    catalog: Optional[str] = typer.Option(None, "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH"),
+    catalog: Optional[str] = typer.Option(None, "--catalog", "-c", help="类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     name: Optional[str] = typer.Option(None, "--name", help="按名称模糊搜索"),
-    status: Optional[List[str]] = typer.Option(None, "--status", help="状态: ONLINE | OFFLINE，可多次传入"),
-    content_type: Optional[List[str]] = typer.Option(None, "--content-type", help="内容类型，可多次传入"),
-    modal: Optional[str] = typer.Option(None, "--modal", help="模态: TEXT/IMAGE/VIDEO/AUDIO/OTHER"),
-    file_source: Optional[str] = typer.Option(None, "--file-source", help="文件来源: OBS/LOCAL/GALLERY"),
-    file_format: Optional[str] = typer.Option(None, "--file-format", help="文件格式"),
+    status: Optional[List[str]] = typer.Option(None, "--status", help="状态 (可多次传入): ONLINE | OFFLINE"),
+    content_type: Optional[List[str]] = typer.Option(None, "--content-type", help=(
+        "内容类型 (可多次传入): "
+        "SINGLE_QA (单轮问答) | SINGLE_QA_MAN (单轮问答人设) | MULTI_QA (多轮问答) | MULTI_QA_MAN (多轮问答人设) | "
+        "QA_SORTING (问答排序) | DPO_QA (偏好优化DPO) | DPO_QA_MAN (偏好优化DPO人设) | "
+        "PLAIN_TXT (文档) | WEB_PAGE (网页) | PRE_TRAINED_TEXT (预训练文本) | "
+        "VIDEO (视频) | VIDEO_CLIP_ANNOTATION (视频剪辑标注) | VIDEO_UNDERSTANDING (视频理解) | "
+        "VIDEO_EVENT_DETECTION (事件检测) | VIDEO_CLASSIFICATION (视频分类) | "
+        "TIME_SERIES_PREDICT (时序) | REGRESSION_CLASSIFICATION (回归分类) | "
+        "IMAGE (仅图片) | IMAGE_AND_CAPTION (图片+Caption) | IMAGE_AND_QA (图片+QA对) | "
+        "IMAGE_AND_CV_ANNOTATION (图片+CV标注) | IMAGE_OBJECT_DETECTION (物体检测) | "
+        "IMAGE_CLASSIFICATION (图像分类) | IMAGE_ANOMALY_DETECTION (异常检测) | "
+        "IMAGE_SEMANTIC_SEGMENTATION (语义分割) | IMAGE_POSE_ESTIMATION (姿态估计) | "
+        "IMAGE_INSTANCE_SEGMENTATION (实例分割) | IMAGE_CHANGE_DETECTION (变化检测) | "
+        "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)"
+    )),
+    modal: Optional[str] = typer.Option(None, "--modal", help="模态: TEXT (文本) | IMAGE (图片) | VIDEO (视频) | AUDIO (音频) | WEATHER (气象) | PREDICT (预测) | OTHER (其他)"),
+    file_source: Optional[str] = typer.Option(None, "--file-source", help="文件来源: OBS (自己的 OBS 桶路径) | LOCAL (本地终端文件目录) | GALLERY (AIhub 订阅数据集)"),
+    file_format: Optional[str] = typer.Option(None, "--file-format", help=(
+        "文件格式: JSONL | TXT | CSV | HTML | MOBI | EPUB | DOCX | PDF | "
+        "MP4 | AVI | AVI_MP4 | JPGS_JSONL | TAR | IMAGE | "
+        "JPG_TXT | JPEG_TXT | PNG_TXT | BMP_TXT | "
+        "JPG_XML | JPEG_XML | PNG_XML | BMP_XML | "
+        "PASCAL | YOLO | "
+        "IMAGE_JSON | IMAGE_PNG | IMAGE_TXT | IMAGE_XML | "
+        "VIDEO_JSON | VIDEO_TXT | USER_DEFINED"
+    )),
     creator: Optional[str] = typer.Option(None, "--creator", help="创建人，模糊搜索"),
     mine: bool = typer.Option(False, "--mine", help="只看我创建的"),
     show_deleted: bool = typer.Option(False, "--show-deleted", help="包含已删除"),
-    sort_by: str = typer.Option("create_time", "--sort-by", help="排序字段: create_time | size | record_num"),
-    sort_type: str = typer.Option("desc", "--sort-type", help="排序方向: asc | desc"),
-    limit: int = typer.Option(20, "--limit", help="每页数量 (1-1000)"),
-    offset: int = typer.Option(0, "--offset", help="起始偏移"),
-    page: Optional[int] = typer.Option(None, "--page", help="页码，从 1 开始，优先级高于 offset"),
-    all_pages: bool = typer.Option(False, "--all", help="自动翻页拉取全部结果"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table/json/yaml/id"),
+    sort_by: str = typer.Option("create_time", "--sort-by", help="排序字段: create_time (创建时间) | size (大小) | record_num (样本数)"),
+    sort_type: str = typer.Option("desc", "--sort-type", help="排序方向: asc (升序) | desc (降序)"),
+    limit: int = typer.Option(20, "--limit", help="每页数量，取值范围 1-1000，默认 20"),
+    offset: int = typer.Option(0, "--offset", help="起始偏移，从 0 开始"),
+    page: Optional[int] = typer.Option(None, "--page", help="页码，从 1 开始，优先级高于 --offset"),
+    all_pages: bool = typer.Option(False, "--all", help="自动翻页拉取全部结果（忽略 --limit/--offset/--page）"),
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table (表格) | json | yaml | id (仅 ID 列表)"),
 ):
     """查询数据集列表（v2 接口，支持分页、过滤、一键拉全量）"""
     client = PanguClient()
@@ -168,9 +190,9 @@ def list_datasets(
 @app.command("get")
 def get_dataset(
     dataset_name: str = typer.Argument(help="数据集名称"),
-    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH (必填)"),
+    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别 (必填): ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table (表格) | json | yaml"),
 ):
     """查询数据集详情（按名称+类别）"""
     client = PanguClient()
@@ -193,7 +215,7 @@ def get_dataset(
 def batch_get(
     dataset_ids: List[str] = typer.Argument(help="数据集 ID 列表，可传多个"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table (表格) | json | yaml | id (仅 ID 列表)"),
 ):
     """按 ID 批量查询数据集详情"""
     client = PanguClient()
@@ -218,10 +240,10 @@ def batch_get(
 @app.command("delete")
 def delete_datasets(
     dataset_names: List[str] = typer.Argument(help="数据集名称，可传多个"),
-    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH"),
+    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式: json | yaml | table"),
 ):
     """批量删除数据集（软删除，可恢复）"""
     if not yes:
@@ -238,9 +260,9 @@ def delete_datasets(
 @app.command("purge")
 def purge_dataset(
     dataset_name: str = typer.Argument(help="数据集名称"),
-    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL | PROCESS | PUBLISH"),
+    catalog: str = typer.Option("ORIGINAL", "--catalog", "-c", help="类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    delete_obs: bool = typer.Option(False, "--delete-obs", help="同时删除 OBS 源文件"),
+    delete_obs: bool = typer.Option(False, "--delete-obs", help="同时删除 OBS 源文件（危险操作，文件不可恢复）"),
     yes: bool = typer.Option(False, "-y", "--yes", help="跳过确认"),
 ):
     """彻底清除数据集（不可恢复）"""
@@ -267,15 +289,37 @@ def purge_dataset(
 @app.command("import")
 def import_data(
     name: Optional[str] = typer.Option(None, "--name", help="数据集名称（必填，可来自配置文件）"),
-    obs_path: Optional[str] = typer.Option(None, "--obs-path", help="OBS 数据路径"),
-    content_type: Optional[str] = typer.Option(None, "--content-type", help="内容类型，如 PRE_TRAINED_TEXT/SINGLE_QA 等"),
-    file_source: str = typer.Option("OBS", "--file-source", help="文件来源: OBS | LOCAL | GALLERY"),
-    file_format: Optional[str] = typer.Option(None, "--file-format", help="文件格式: JSONL/CSV/PDF 等"),
+    obs_path: Optional[str] = typer.Option(None, "--obs-path", help="OBS 数据路径，格式 obs://bucket/path/"),
+    content_type: Optional[str] = typer.Option(None, "--content-type", help=(
+        "内容类型 (必填): "
+        "SINGLE_QA (单轮问答) | SINGLE_QA_MAN (单轮问答人设) | MULTI_QA (多轮问答) | MULTI_QA_MAN (多轮问答人设) | "
+        "QA_SORTING (问答排序) | DPO_QA (偏好优化DPO) | DPO_QA_MAN (偏好优化DPO人设) | "
+        "PLAIN_TXT (文档) | WEB_PAGE (网页) | PRE_TRAINED_TEXT (预训练文本) | "
+        "VIDEO (视频) | VIDEO_CLIP_ANNOTATION (视频剪辑标注) | VIDEO_UNDERSTANDING (视频理解) | "
+        "VIDEO_EVENT_DETECTION (事件检测) | VIDEO_CLASSIFICATION (视频分类) | "
+        "TIME_SERIES_PREDICT (时序) | REGRESSION_CLASSIFICATION (回归分类) | "
+        "IMAGE (仅图片) | IMAGE_AND_CAPTION (图片+Caption) | IMAGE_AND_QA (图片+QA对) | "
+        "IMAGE_AND_CV_ANNOTATION (图片+CV标注) | IMAGE_OBJECT_DETECTION (物体检测) | "
+        "IMAGE_CLASSIFICATION (图像分类) | IMAGE_ANOMALY_DETECTION (异常检测) | "
+        "IMAGE_SEMANTIC_SEGMENTATION (语义分割) | IMAGE_POSE_ESTIMATION (姿态估计) | "
+        "IMAGE_INSTANCE_SEGMENTATION (实例分割) | IMAGE_CHANGE_DETECTION (变化检测) | "
+        "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)"
+    )),
+    file_source: str = typer.Option("OBS", "--file-source", help="文件来源: OBS (自己的 OBS 桶路径) | LOCAL (本地终端文件目录) | GALLERY (AIhub 订阅数据集)"),
+    file_format: Optional[str] = typer.Option(None, "--file-format", help=(
+        "文件格式: JSONL | TXT | CSV | HTML | MOBI | EPUB | DOCX | PDF | "
+        "MP4 | AVI | AVI_MP4 | JPGS_JSONL | TAR | IMAGE | "
+        "JPG_TXT | JPEG_TXT | PNG_TXT | BMP_TXT | "
+        "JPG_XML | JPEG_XML | PNG_XML | BMP_XML | "
+        "PASCAL | YOLO | "
+        "IMAGE_JSON | IMAGE_PNG | IMAGE_TXT | IMAGE_XML | "
+        "VIDEO_JSON | VIDEO_TXT | USER_DEFINED"
+    )),
     desc: Optional[str] = typer.Option(None, "--desc", help="数据集描述"),
-    config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径"),
+    config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径，命令行参数覆盖文件内值"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    wait: bool = typer.Option(False, "--wait", help="等待导入完成"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    wait: bool = typer.Option(False, "--wait", help="等待导入完成（阻塞轮询，直到 SUCCESS/FAILED/STOPPED）"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式: json | yaml | table"),
 ):
     """创建数据导入任务"""
     client = PanguClient()
@@ -326,14 +370,28 @@ def import_data(
 def publish_dataset(
     publish_name: str = typer.Option(..., "--publish-name", help="发布后数据集名称（必填）"),
     source_name: str = typer.Option(..., "--source-name", help="来源数据集名称（必填）"),
-    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别"),
-    file_content_type: str = typer.Option(..., "--file-content-type", help="内容类型，如 SINGLE_QA 等（必填）"),
-    publish_format: Optional[str] = typer.Option(None, "--publish-format", help="发布格式: DEFAULT | PANGU | USER_DEFINED"),
+    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
+    file_content_type: str = typer.Option(..., "--file-content-type", help=(
+        "内容类型 (必填): "
+        "SINGLE_QA (单轮问答) | SINGLE_QA_MAN (单轮问答人设) | MULTI_QA (多轮问答) | MULTI_QA_MAN (多轮问答人设) | "
+        "QA_SORTING (问答排序) | DPO_QA (偏好优化DPO) | DPO_QA_MAN (偏好优化DPO人设) | "
+        "PLAIN_TXT (文档) | WEB_PAGE (网页) | PRE_TRAINED_TEXT (预训练文本) | "
+        "VIDEO (视频) | VIDEO_CLIP_ANNOTATION (视频剪辑标注) | VIDEO_UNDERSTANDING (视频理解) | "
+        "VIDEO_EVENT_DETECTION (事件检测) | VIDEO_CLASSIFICATION (视频分类) | "
+        "TIME_SERIES_PREDICT (时序) | REGRESSION_CLASSIFICATION (回归分类) | "
+        "IMAGE (仅图片) | IMAGE_AND_CAPTION (图片+Caption) | IMAGE_AND_QA (图片+QA对) | "
+        "IMAGE_AND_CV_ANNOTATION (图片+CV标注) | IMAGE_OBJECT_DETECTION (物体检测) | "
+        "IMAGE_CLASSIFICATION (图像分类) | IMAGE_ANOMALY_DETECTION (异常检测) | "
+        "IMAGE_SEMANTIC_SEGMENTATION (语义分割) | IMAGE_POSE_ESTIMATION (姿态估计) | "
+        "IMAGE_INSTANCE_SEGMENTATION (实例分割) | IMAGE_CHANGE_DETECTION (变化检测) | "
+        "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)"
+    )),
+    publish_format: Optional[str] = typer.Option(None, "--publish-format", help="发布格式: DEFAULT (标准格式) | PANGU (盘古格式) | USER_DEFINED (自定义格式)"),
     is_global: bool = typer.Option(False, "--global", help="全空间可见"),
     description: Optional[str] = typer.Option(None, "--description", "-d", help="描述"),
-    config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径"),
+    config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径，命令行参数覆盖文件内值"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式: json | yaml | table"),
 ):
     """发布数据集（创建数据发布任务）"""
     client = PanguClient()
@@ -369,11 +427,11 @@ def publish_dataset(
 @app.command("process")
 def process_dataset(
     source_name: str = typer.Option(..., "--source-name", help="待加工数据集名称（必填）"),
-    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别: ORIGINAL | PROCESS | PUBLISH"),
-    operator_catalog: str = typer.Option("SYS", "--operator-catalog", help="算子类别: SYS | USER"),
+    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
+    operator_catalog: str = typer.Option("SYS", "--operator-catalog", help="算子来源: SYS (预置算子) | USER (用户自定义算子)"),
     config: str = typer.Option(..., "--config", "-f", help="YAML 配置文件路径（必填，包含 task_operators 等）"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式: json | yaml | table"),
 ):
     """创建数据加工任务（task_operators 配置项较多，建议走 YAML）"""
     client = PanguClient()
@@ -400,12 +458,12 @@ def process_dataset(
 
 @app.command("operators")
 def list_operators(
-    catalog: Optional[str] = typer.Option(None, "--catalog", help="算子来源: SYS | USER"),
-    modal: Optional[str] = typer.Option(None, "--modal", help="模态"),
-    category: Optional[List[str]] = typer.Option(None, "--category", help="分类: DL/DT/DS/DE/DF/OTHER，可多次传入"),
+    catalog: Optional[str] = typer.Option(None, "--catalog", help="算子来源: SYS (预置算子) | USER (用户自定义算子)"),
+    modal: Optional[str] = typer.Option(None, "--modal", help="模态: TEXT (文本) | IMAGE (图片) | VIDEO (视频) | AUDIO (音频)"),
+    category: Optional[List[str]] = typer.Option(None, "--category", help="算子类型 (可多次传入): DL (数据打标) | DT (数据转换) | DS (数据抽样) | DE (数据提取) | DF (数据过滤) | OTHER (其他)"),
     mine: bool = typer.Option(False, "--mine", help="只看我创建的"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式: json | yaml | table"),
 ):
     """查询加工算子列表（响应为一级分类→二级分类→算子的嵌套结构）"""
     client = PanguClient()
@@ -423,10 +481,10 @@ def list_operators(
 
 @app.command("lineage")
 def dataset_lineage(
-    from_path: str = typer.Argument(help="来源数据集的 OBS 路径"),
-    limit: int = typer.Option(100, "--limit", help="返回血缘数量上限 (1-1000)"),
+    from_path: str = typer.Argument(help="来源数据集的 OBS 路径，格式 obs://bucket/path/"),
+    limit: int = typer.Option(100, "--limit", help="返回血缘数量上限，取值范围 1-1000，默认 100"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式: json | yaml | table"),
 ):
     """查询 OBS 路径关联的数据血缘"""
     client = PanguClient()

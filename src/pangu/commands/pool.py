@@ -32,19 +32,19 @@ COLUMNS = [
 @app.command("list")
 def list_pools(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    # v1 参数
-    arch: str = typer.Option("X86", "--arch", help="[v1] 架构类型: X86 | ARM"),
-    device_type: Optional[str] = typer.Option(None, "--device-type", help="[v1] 设备类型: GPU | NPU | NONE"),
-    filter_status: Optional[str] = typer.Option(None, "--status", help="[v1] 资源池状态: created | failed | creating"),
-    # v2 参数
-    job_type: Optional[str] = typer.Option(None, "--job-type", help="[v2] 作业类型: train | infer"),
-    chip_types: Optional[List[str]] = typer.Option(None, "--chip-type", help="[v2] 卡类型，可多次传入，如 D910B3"),
-    use_type: Optional[str] = typer.Option(None, "--use-type", help="[v2] 使用类型: poc | private"),
-    flavor_ids: Optional[List[str]] = typer.Option(None, "--flavor-id", help="[v2] 资源规格，可多次传入"),
-    asset_code: Optional[str] = typer.Option(None, "--asset-code", help="[v2] 资产编码"),
+    # HCS 参数
+    arch: str = typer.Option("X86", "--arch", help="[HCS] 架构类型: X86 | ARM"),
+    device_type: Optional[str] = typer.Option(None, "--device-type", help="[HCS] 设备类型: GPU | NPU | NONE"),
+    filter_status: Optional[str] = typer.Option(None, "--status", help="[HCS] 资源池状态: created | failed | creating"),
+    # HC 参数
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="[HC] 作业类型: train | infer"),
+    chip_types: Optional[List[str]] = typer.Option(None, "--chip-type", help="[HC] 卡类型，可多次传入，如 D910B3"),
+    use_type: Optional[str] = typer.Option(None, "--use-type", help="[HC] 使用类型: poc | private"),
+    flavor_ids: Optional[List[str]] = typer.Option(None, "--flavor-id", help="[HC] 资源规格，可多次传入"),
+    asset_code: Optional[str] = typer.Option(None, "--asset-code", help="[HC] 资产编码"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table/json/yaml/id"),
 ):
-    """查询资源池列表（api_version=v1/v2 由 pangu config set api_version 控制）"""
+    """查询资源池列表（env_type=HCS/HC 由 pangu config set env_type 控制）"""
     client  = PanguClient()
     adapter = get_pool_adapter(client.config.env_type)
 

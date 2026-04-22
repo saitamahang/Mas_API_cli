@@ -38,6 +38,9 @@ class PanguConfig(BaseModel):
     # Token 模式密码（可选，明文存储，优先级低于 PANGU_PASSWORD 环境变量）
     password: str = Field(default="", description="登录密码（可选，明文存储）")
 
+    # 环境类型（影响部分模块的 URL 和请求/响应格式）
+    env_type: str = Field(default="HCS", description="环境类型: HCS | HC")
+
     # 网络
     ssl_verify: bool = Field(default=True, description="是否验证 SSL 证书")
     timeout: int = Field(default=60, description="HTTP 请求超时秒数")

@@ -7,91 +7,73 @@ from typing import List, Optional
 import typer
 from rich.console import Console
 
+from pangu.adapters import get_pool_adapter
+from pangu.adapters.base import PoolRequest
 from pangu.client import PanguClient
 from pangu.output import output
 
 app = typer.Typer(help="资源池管理")
 console = Console()
 
-BASE_PATH = "/v1/{project_id}/pangu/studio/resource-pool/online/{workspace_id}/pool"
-
-
-def _flatten_pool(pool: dict) -> dict:
-    """将 API 响应的嵌套 pool 对象拍平为可直接展示的字典"""
-    metadata = pool.get("metadata") or {}
-    labels = metadata.get("labels") or {}
-    spec = pool.get("spec") or {}
-    status = pool.get("status") or {}
-
-    scope_list = spec.get("scope") or []
-    resources = spec.get("resources") or []
-    nodes = pool.get("nodes") or []
-
-    total_nodes = len(nodes)
-    total_count = sum(r.get("count", 0) for r in resources)
-
-    return {
-        "pool_id": metadata.get("name", ""),
-        "pool_name": labels.get("os.modelarts/name", ""),
-        "pool_type": spec.get("type", ""),
-        "status": status.get("phase", ""),
-        "scope": "/".join(scope_list),
-        "node_count": total_nodes or total_count,
-        "chip_type": pool.get("chip_type", ""),
-        "arch": pool.get("arch", ""),
-        "create_time": metadata.get("creationTimestamp", metadata.get("create_time", "")),
-    }
+# 两个版本共用的展示列（normalize 后字段名统一）
+COLUMNS = [
+    ("pool_id",    "资源池 ID"),
+    ("pool_name",  "名称"),
+    ("pool_type",  "类型"),
+    ("status",     "状态"),
+    ("scope",      "作业类型"),
+    ("node_count", "节点数"),
+    ("chip_type",  "芯片"),
+    ("arch",       "架构"),
+    ("create_time","创建时间"),
+]
 
 
 @app.command("list")
 def list_pools(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
-    arch: str = typer.Option("X86", "--arch", help="架构类型: X86 | ARM"),
-    device_type: Optional[str] = typer.Option(None, "--device-type", help="设备类型: GPU | NPU | NONE"),
-    job_type: Optional[str] = typer.Option(None, "--job-type", help="作业类型: Train | Infer"),
-    status: Optional[str] = typer.Option(None, "--status", help="资源池状态: created | failed | creating"),
-    chip_types: Optional[List[str]] = typer.Option(None, "--chip-type", help="卡类型，可多次传入"),
+    # v1 参数
+    arch: str = typer.Option("X86", "--arch", help="[v1] 架构类型: X86 | ARM"),
+    device_type: Optional[str] = typer.Option(None, "--device-type", help="[v1] 设备类型: GPU | NPU | NONE"),
+    filter_status: Optional[str] = typer.Option(None, "--status", help="[v1] 资源池状态: created | failed | creating"),
+    # v2 参数
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="[v2] 作业类型: train | infer"),
+    chip_types: Optional[List[str]] = typer.Option(None, "--chip-type", help="[v2] 卡类型，可多次传入，如 D910B3"),
+    use_type: Optional[str] = typer.Option(None, "--use-type", help="[v2] 使用类型: poc | private"),
+    flavor_ids: Optional[List[str]] = typer.Option(None, "--flavor-id", help="[v2] 资源规格，可多次传入"),
+    asset_code: Optional[str] = typer.Option(None, "--asset-code", help="[v2] 资产编码"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table/json/yaml/id"),
 ):
-    """查询资源池列表"""
-    client = PanguClient()
+    """查询资源池列表（api_version=v1/v2 由 pangu config set api_version 控制）"""
+    client  = PanguClient()
+    adapter = get_pool_adapter(client.config.env_type)
 
-    body: dict = {"arch": arch}
-    if device_type:
-        body["device_type"] = device_type
-    if job_type:
-        body["job_type"] = job_type
-    if status:
-        body["status"] = status
-    if chip_types:
-        body["chip_types"] = chip_types
+    req = PoolRequest(
+        arch=arch,
+        device_type=device_type,
+        status=filter_status,
+        job_type=job_type,
+        chip_types=chip_types,
+        use_type=use_type,
+        flavor_ids=flavor_ids,
+        asset_code=asset_code,
+    )
+    body = adapter.build_request(req)
 
-    data = client.post(BASE_PATH, workspace_id=workspace, json=body)
+    if adapter.workspace_in_path:
+        data = client.post(adapter.path, workspace_id=workspace, json=body)
+    else:
+        wid = client.config.get_workspace_id(workspace)
+        extra_hdrs = adapter.extra_headers(wid)
+        data = client.post(adapter.path, workspace_id=None, json=body, extra_headers=extra_hdrs)
 
-    raw_pools = []
-    if isinstance(data, dict):
-        raw_pools = data.get("pools") or []
-    elif isinstance(data, list):
-        raw_pools = data
-
-    items = [_flatten_pool(p) for p in raw_pools]
-
-    columns = [
-        ("pool_id", "资源池 ID"),
-        ("pool_name", "名称"),
-        ("pool_type", "类型"),
-        ("status", "状态"),
-        ("scope", "支持作业"),
-        ("node_count", "节点数"),
-        ("chip_type", "芯片"),
-        ("arch", "架构"),
-    ]
+    items = adapter.normalize(data)
 
     output(
         items,
         fmt=fmt,
-        columns=columns,
-        title="资源池",
+        columns=COLUMNS,
+        title=f"资源池 (env={client.config.env_type})",
         status_key="status",
         id_key="pool_id",
     )

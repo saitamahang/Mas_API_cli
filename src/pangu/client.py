@@ -102,6 +102,7 @@ class PanguClient:
         workspace_id: Optional[str] = None,
         params: Optional[dict] = None,
         json: Optional[dict] = None,
+        extra_headers: Optional[dict] = None,
         **path_params: str,
     ) -> Any:
         """发起 API 请求
@@ -121,6 +122,8 @@ class PanguClient:
 
         url = self._build_url(path, **path_params)
         headers = self.auth.get_auth_headers()
+        if extra_headers:
+            headers.update(extra_headers)
 
         # 过滤 None 值的 query 参数
         if params:
@@ -139,8 +142,8 @@ class PanguClient:
     def get(self, path: str, workspace_id: Optional[str] = None, params: Optional[dict] = None, **kw: str) -> Any:
         return self.request("GET", path, workspace_id=workspace_id, params=params, **kw)
 
-    def post(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, **kw: str) -> Any:
-        return self.request("POST", path, workspace_id=workspace_id, json=json, **kw)
+    def post(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, extra_headers: Optional[dict] = None, **kw: str) -> Any:
+        return self.request("POST", path, workspace_id=workspace_id, json=json, extra_headers=extra_headers, **kw)
 
     def put(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, **kw: str) -> Any:
         return self.request("PUT", path, workspace_id=workspace_id, json=json, **kw)

@@ -439,8 +439,13 @@ def task_nodes(
     output(data, fmt=fmt)
 
 
-def _render_loss_curve(loss_points: list, width: int = 60, height: int = 12) -> None:
-    """在终端用 Unicode 字符绘制 loss-epoch 曲线图。"""
+def _render_loss_curve(loss_points: list, width: int = 100, height: int = 16) -> None:
+    """在终端用 Unicode 字符绘制 loss-epoch 曲线图。
+
+    - Y 轴固定从 0 开始，上限为 loss 最大值向上取整到一位（留约 10% 余量）
+    - X 轴固定长度 width，按迭代轮次 (数据点序号) 等分；点数多于 width 时降采样，少于 width 时按比例分布
+    - 相邻点之间用 Bresenham 连线，形成连续曲线
+    """
     pts = [(p.get("epoch", i), float(p.get("loss", 0.0)))
            for i, p in enumerate(loss_points) if isinstance(p, dict)]
     if not pts:
@@ -449,43 +454,92 @@ def _render_loss_curve(loss_points: list, width: int = 60, height: int = 12) -> 
 
     values = [v for _, v in pts]
     epochs = [e for e, _ in pts]
-    vmin, vmax = min(values), max(values)
-    vrange = (vmax - vmin) or 1.0
     n = len(values)
 
-    # 降采样到宽度 width
-    if n > width:
-        step = n / width
-        samples = [values[min(int(i * step), n - 1)] for i in range(width)]
+    vmin = 0.0
+    raw_max = max(values) if values else 1.0
+    vmax = raw_max * 1.10 if raw_max > 0 else 1.0
+    vrange = vmax  # 因 vmin=0
+
+    # 固定宽度：按迭代轮次等分到 width 列
+    # 每个数据点映射到 x = round(i * (width-1) / (n-1))
+    xy: list[tuple[int, int]] = []
+    if n == 1:
+        xy.append((0, int((1 - values[0] / vrange) * (height - 1))))
     else:
-        samples = values
-        width = n
+        for i, v in enumerate(values):
+            x = int(round(i * (width - 1) / (n - 1)))
+            y = int(round((1 - v / vrange) * (height - 1)))
+            y = max(0, min(height - 1, y))
+            xy.append((x, y))
 
     grid = [[" "] * width for _ in range(height)]
-    for x, v in enumerate(samples):
-        y = int((1 - (v - vmin) / vrange) * (height - 1))
+
+    def _draw_line(x0: int, y0: int, x1: int, y1: int) -> None:
+        # Bresenham 连线
+        dx = abs(x1 - x0); dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+        while True:
+            if 0 <= x0 < width and 0 <= y0 < height:
+                grid[y0][x0] = "●"
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy; x0 += sx
+            if e2 < dx:
+                err += dx; y0 += sy
+
+    # 先连线
+    for i in range(len(xy) - 1):
+        _draw_line(xy[i][0], xy[i][1], xy[i + 1][0], xy[i + 1][1])
+    # 再点缀数据点（保证端点/关键点清晰）
+    for x, y in xy:
         grid[y][x] = "●"
 
     console.print(
         f"[bold cyan]Loss-Epoch 曲线[/bold cyan]  "
         f"samples={n}  epoch={min(epochs)}→{max(epochs)}  "
-        f"loss max={vmax:.4f} / min={vmin:.4f} / last={values[-1]:.4f}"
+        f"loss max={raw_max:.4f} / min={min(values):.4f} / last={values[-1]:.4f}"
     )
+    # 绘制 Y 轴刻度：顶 (vmax)、中 (vmax/2)、底 (0)
     for y, row in enumerate(grid):
         if y == 0:
             label = f"{vmax:6.3f} "
         elif y == height - 1:
-            label = f"{vmin:6.3f} "
+            label = f"{0.0:6.3f} "
         elif y == height // 2:
-            label = f"{(vmin + vrange / 2):6.3f} "
+            label = f"{vmax / 2:6.3f} "
         else:
             label = "       "
         console.print(f"[dim]{label}[/dim]│[cyan]" + "".join(row) + "[/cyan]")
+
+    # X 轴底线 + 刻度
     console.print("       └" + "─" * width)
-    console.print(f"       epoch {min(epochs)}" + " " * max(1, width - 12) + f"epoch {max(epochs)}")
+    # 刻度标签：0 / 25% / 50% / 75% / 100% 对应的 epoch
+    def _epoch_at(frac: float) -> int:
+        idx = int(round(frac * (n - 1))) if n > 1 else 0
+        return epochs[max(0, min(n - 1, idx))]
+    positions = [0, width // 4, width // 2, (3 * width) // 4, width - 1]
+    fracs = [0.0, 0.25, 0.5, 0.75, 1.0]
+    labels = [f"e{_epoch_at(f)}" for f in fracs]
+    tick_line = [" "] * width
+    for p in positions:
+        if 0 <= p < width:
+            tick_line[p] = "│"
+    console.print("       " + "[dim]" + "".join(tick_line) + "[/dim]")
+    label_line = [" "] * width
+    for p, lab in zip(positions, labels):
+        start = max(0, min(width - len(lab), p - len(lab) // 2))
+        for j, ch in enumerate(lab):
+            if start + j < width:
+                label_line[start + j] = ch
+    console.print("       [dim]" + "".join(label_line) + "[/dim]")
 
 
-def _render_metric_bars(metric: dict, bar_width: int = 24) -> None:
+def _render_metric_bars(metric: dict, bar_width: int = 30) -> None:
     """用 Rich Table + 进度条渲染每个类别的 precision / recall。"""
     if not metric or not isinstance(metric, dict):
         console.print("[yellow]无 metric 数据[/yellow]")
@@ -495,15 +549,22 @@ def _render_metric_bars(metric: dict, bar_width: int = 24) -> None:
         try:
             pct = max(0.0, min(100.0, float(pct_raw)))
         except (TypeError, ValueError):
-            return f"[dim]N/A[/dim]"
+            return "[dim]  N/A[/dim]"
         filled = int(round(bar_width * pct / 100))
         color = "green" if pct >= 80 else "yellow" if pct >= 50 else "red"
-        return f"[{color}]{'█' * filled}{'░' * (bar_width - filled)}[/{color}] {pct:5.1f}%"
+        bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (bar_width - filled)}[/dim]"
+        return f"{bar}  [bold]{pct:5.1f}%[/bold]"
 
-    table = Table(title="分类指标 Precision / Recall", show_lines=False)
-    table.add_column("类别", style="bold")
-    table.add_column("Precision", justify="left")
-    table.add_column("Recall", justify="left")
+    table = Table(
+        title="分类指标 Precision / Recall",
+        show_lines=True,           # 行与行之间加分隔线
+        padding=(0, 2),            # 每列左右各留 2 空格
+        title_style="bold cyan",
+        border_style="dim",
+    )
+    table.add_column("类别", style="bold", no_wrap=True, min_width=10)
+    table.add_column("Precision", justify="left", no_wrap=True, min_width=bar_width + 10)
+    table.add_column("Recall",    justify="left", no_wrap=True, min_width=bar_width + 10)
 
     # "all" 置顶，其余按名称排序
     keys = sorted(metric.keys(), key=lambda k: (k != "all", str(k)))
@@ -514,7 +575,8 @@ def _render_metric_bars(metric: dict, bar_width: int = 24) -> None:
         # 兼容 API 拼写 "percision"
         p = m.get("precision", m.get("percision"))
         r = m.get("recall")
-        table.add_row(str(cls), _bar(p), _bar(r))
+        row_style = "bold magenta" if cls == "all" else None
+        table.add_row(str(cls), _bar(p), _bar(r), style=row_style)
     console.print(table)
 
 

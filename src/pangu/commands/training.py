@@ -439,12 +439,17 @@ def task_nodes(
     output(data, fmt=fmt)
 
 
-def _render_loss_curve(loss_points: list, width: int = 100, height: int = 16) -> None:
-    """在终端用 Unicode 字符绘制 loss-epoch 曲线图。
+def _render_loss_curve(loss_points: list, width: int = 100, height: int = 14) -> None:
+    """在终端用 Unicode Braille 点阵绘制 loss-epoch 曲线。
 
-    - Y 轴固定从 0 开始，上限为 loss 最大值向上取整到一位（留约 10% 余量）
-    - X 轴固定长度 width，按迭代轮次 (数据点序号) 等分；点数多于 width 时降采样，少于 width 时按比例分布
-    - 相邻点之间用 Bresenham 连线，形成连续曲线
+    - 采用 Braille (U+2800..U+28FF) 点阵：每个字符格内含 2×4 共 8 个子像素，
+      相比 `●` 的稀疏散点，曲线连续且不会出现字符间缝隙（这才是真正的"连成线"）。
+    - Y 轴固定从 0 开始，上限 = max(loss) × 1.10（留 10% 余量）。
+    - X 轴固定宽度 width 字符（等效 width*2 子像素），按迭代轮次等分。
+    - 相邻数据点之间用 Bresenham 算法在高分辨率画布上连线。
+
+    注：Git Bash / Windows Terminal / iTerm2 / macOS Terminal 均支持 Braille 字符；
+        若终端字体缺失 Braille 字形，会显示为占位方块（罕见）。
     """
     pts = [(p.get("epoch", i), float(p.get("loss", 0.0)))
            for i, p in enumerate(loss_points) if isinstance(p, dict)]
@@ -456,34 +461,44 @@ def _render_loss_curve(loss_points: list, width: int = 100, height: int = 16) ->
     epochs = [e for e, _ in pts]
     n = len(values)
 
-    vmin = 0.0
     raw_max = max(values) if values else 1.0
-    vmax = raw_max * 1.10 if raw_max > 0 else 1.0
-    vrange = vmax  # 因 vmin=0
+    vmax = raw_max * 1.10 if raw_max > 0 else 1.0  # vmin = 0 固定
 
-    # 固定宽度：按迭代轮次等分到 width 列
-    # 每个数据点映射到 x = round(i * (width-1) / (n-1))
-    xy: list[tuple[int, int]] = []
-    if n == 1:
-        xy.append((0, int((1 - values[0] / vrange) * (height - 1))))
-    else:
-        for i, v in enumerate(values):
-            x = int(round(i * (width - 1) / (n - 1)))
-            y = int(round((1 - v / vrange) * (height - 1)))
-            y = max(0, min(height - 1, y))
-            xy.append((x, y))
+    # 高分辨率画布：每个字符格 = 2 列 × 4 行 Braille 子像素
+    hres_w = width * 2
+    hres_h = height * 4
+    grid_bits = [[0] * width for _ in range(height)]  # 每格存 8-bit braille 点阵
 
-    grid = [[" "] * width for _ in range(height)]
+    # Unicode Braille 点位 -> 位偏移：
+    #   (子列, 子行)        dot    bit
+    #   (0,0)               1       0
+    #   (0,1)               2       1
+    #   (0,2)               3       2
+    #   (0,3)               7       6
+    #   (1,0)               4       3
+    #   (1,1)               5       4
+    #   (1,2)               6       5
+    #   (1,3)               8       7
+    dot_bits = [
+        [0, 3],  # sub_row 0
+        [1, 4],  # sub_row 1
+        [2, 5],  # sub_row 2
+        [6, 7],  # sub_row 3
+    ]
+
+    def _set_pixel(hx: int, hy: int) -> None:
+        if 0 <= hx < hres_w and 0 <= hy < hres_h:
+            cx, sx = divmod(hx, 2)
+            cy, sy = divmod(hy, 4)
+            grid_bits[cy][cx] |= 1 << dot_bits[sy][sx]
 
     def _draw_line(x0: int, y0: int, x1: int, y1: int) -> None:
-        # Bresenham 连线
         dx = abs(x1 - x0); dy = abs(y1 - y0)
         sx = 1 if x0 < x1 else -1
         sy = 1 if y0 < y1 else -1
         err = dx - dy
         while True:
-            if 0 <= x0 < width and 0 <= y0 < height:
-                grid[y0][x0] = "●"
+            _set_pixel(x0, y0)
             if x0 == x1 and y0 == y1:
                 break
             e2 = 2 * err
@@ -492,20 +507,26 @@ def _render_loss_curve(loss_points: list, width: int = 100, height: int = 16) ->
             if e2 < dx:
                 err += dx; y0 += sy
 
-    # 先连线
-    for i in range(len(xy) - 1):
-        _draw_line(xy[i][0], xy[i][1], xy[i + 1][0], xy[i + 1][1])
-    # 再点缀数据点（保证端点/关键点清晰）
-    for x, y in xy:
-        grid[y][x] = "●"
+    # 数据点 -> 高分辨率坐标（按迭代序号等分 X 轴）
+    hxys: list[tuple[int, int]] = []
+    for i, v in enumerate(values):
+        hx = 0 if n == 1 else int(round(i * (hres_w - 1) / (n - 1)))
+        hy = int(round((1 - v / vmax) * (hres_h - 1)))
+        hy = max(0, min(hres_h - 1, hy))
+        hxys.append((hx, hy))
+
+    for i in range(len(hxys) - 1):
+        _draw_line(hxys[i][0], hxys[i][1], hxys[i + 1][0], hxys[i + 1][1])
+    # 单点情况至少画一个像素
+    if len(hxys) == 1:
+        _set_pixel(hxys[0][0], hxys[0][1])
 
     console.print(
         f"[bold cyan]Loss-Epoch 曲线[/bold cyan]  "
         f"samples={n}  epoch={min(epochs)}→{max(epochs)}  "
         f"loss max={raw_max:.4f} / min={min(values):.4f} / last={values[-1]:.4f}"
     )
-    # 绘制 Y 轴刻度：顶 (vmax)、中 (vmax/2)、底 (0)
-    for y, row in enumerate(grid):
+    for y in range(height):
         if y == 0:
             label = f"{vmax:6.3f} "
         elif y == height - 1:
@@ -514,14 +535,16 @@ def _render_loss_curve(loss_points: list, width: int = 100, height: int = 16) ->
             label = f"{vmax / 2:6.3f} "
         else:
             label = "       "
-        console.print(f"[dim]{label}[/dim]│[cyan]" + "".join(row) + "[/cyan]")
+        row_chars = "".join(chr(0x2800 + grid_bits[y][x]) for x in range(width))
+        console.print(f"[dim]{label}[/dim]│[cyan]{row_chars}[/cyan]")
 
-    # X 轴底线 + 刻度
+    # X 轴 + 刻度
     console.print("       └" + "─" * width)
-    # 刻度标签：0 / 25% / 50% / 75% / 100% 对应的 epoch
+
     def _epoch_at(frac: float) -> int:
         idx = int(round(frac * (n - 1))) if n > 1 else 0
         return epochs[max(0, min(n - 1, idx))]
+
     positions = [0, width // 4, width // 2, (3 * width) // 4, width - 1]
     fracs = [0.0, 0.25, 0.5, 0.75, 1.0]
     labels = [f"e{_epoch_at(f)}" for f in fracs]
@@ -529,7 +552,7 @@ def _render_loss_curve(loss_points: list, width: int = 100, height: int = 16) ->
     for p in positions:
         if 0 <= p < width:
             tick_line[p] = "│"
-    console.print("       " + "[dim]" + "".join(tick_line) + "[/dim]")
+    console.print("       [dim]" + "".join(tick_line) + "[/dim]")
     label_line = [" "] * width
     for p, lab in zip(positions, labels):
         start = max(0, min(width - len(lab), p - len(lab) // 2))

@@ -299,7 +299,7 @@ def purge_dataset(
 @app.command("import")
 def import_data(
     name: Optional[str] = typer.Option(None, "--name", help="数据集名称（必填，可来自配置文件）"),
-    obs_path: Optional[str] = typer.Option(None, "--obs-path", help="OBS 数据路径，格式 obs://bucket/path/"),
+    obs_path: Optional[str] = typer.Option(None, "--obs-path", help="OBS 数据路径，格式 bucket-name/path/ (不含 obs:// 前缀；若传入 obs://... 会自动剥离)"),
     content_type: Optional[str] = typer.Option(None, "--content-type", help=(
         "内容类型 (必填): "
         "SINGLE_QA (单轮问答) | SINGLE_QA_MAN (单轮问答人设) | MULTI_QA (多轮问答) | MULTI_QA_MAN (多轮问答人设) | "
@@ -357,6 +357,12 @@ def import_data(
     if missing:
         console.print(f"[red]缺少必填项: {', '.join(missing)}[/red]")
         raise typer.Exit(1)
+
+    # API 要求 obs_path 为 bucket/path 形式，自动剥离 obs:// 前缀做兼容
+    if body["obs_path"].startswith("obs://"):
+        stripped = body["obs_path"][len("obs://"):]
+        console.print(f"[cyan]已剥离 obs:// 前缀: {body['obs_path']} → {stripped}[/cyan]")
+        body["obs_path"] = stripped
 
     # content_type 与 file_format 的固定关联校验：命中表则必须匹配，未传则自动补齐
     required_fmt = CONTENT_TYPE_FILE_FORMAT.get(body["content_type"])

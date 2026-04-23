@@ -12,6 +12,7 @@ from typing import List, Optional
 import typer
 import yaml
 from rich.console import Console
+from rich.table import Table
 
 from pangu.client import PanguClient
 from pangu.output import output
@@ -438,15 +439,102 @@ def task_nodes(
     output(data, fmt=fmt)
 
 
+def _render_loss_curve(loss_points: list, width: int = 60, height: int = 12) -> None:
+    """在终端用 Unicode 字符绘制 loss-epoch 曲线图。"""
+    pts = [(p.get("epoch", i), float(p.get("loss", 0.0)))
+           for i, p in enumerate(loss_points) if isinstance(p, dict)]
+    if not pts:
+        console.print("[yellow]无 loss 数据[/yellow]")
+        return
+
+    values = [v for _, v in pts]
+    epochs = [e for e, _ in pts]
+    vmin, vmax = min(values), max(values)
+    vrange = (vmax - vmin) or 1.0
+    n = len(values)
+
+    # 降采样到宽度 width
+    if n > width:
+        step = n / width
+        samples = [values[min(int(i * step), n - 1)] for i in range(width)]
+    else:
+        samples = values
+        width = n
+
+    grid = [[" "] * width for _ in range(height)]
+    for x, v in enumerate(samples):
+        y = int((1 - (v - vmin) / vrange) * (height - 1))
+        grid[y][x] = "●"
+
+    console.print(
+        f"[bold cyan]Loss-Epoch 曲线[/bold cyan]  "
+        f"samples={n}  epoch={min(epochs)}→{max(epochs)}  "
+        f"loss max={vmax:.4f} / min={vmin:.4f} / last={values[-1]:.4f}"
+    )
+    for y, row in enumerate(grid):
+        if y == 0:
+            label = f"{vmax:6.3f} "
+        elif y == height - 1:
+            label = f"{vmin:6.3f} "
+        elif y == height // 2:
+            label = f"{(vmin + vrange / 2):6.3f} "
+        else:
+            label = "       "
+        console.print(f"[dim]{label}[/dim]│[cyan]" + "".join(row) + "[/cyan]")
+    console.print("       └" + "─" * width)
+    console.print(f"       epoch {min(epochs)}" + " " * max(1, width - 12) + f"epoch {max(epochs)}")
+
+
+def _render_metric_bars(metric: dict, bar_width: int = 24) -> None:
+    """用 Rich Table + 进度条渲染每个类别的 precision / recall。"""
+    if not metric or not isinstance(metric, dict):
+        console.print("[yellow]无 metric 数据[/yellow]")
+        return
+
+    def _bar(pct_raw) -> str:
+        try:
+            pct = max(0.0, min(100.0, float(pct_raw)))
+        except (TypeError, ValueError):
+            return f"[dim]N/A[/dim]"
+        filled = int(round(bar_width * pct / 100))
+        color = "green" if pct >= 80 else "yellow" if pct >= 50 else "red"
+        return f"[{color}]{'█' * filled}{'░' * (bar_width - filled)}[/{color}] {pct:5.1f}%"
+
+    table = Table(title="分类指标 Precision / Recall", show_lines=False)
+    table.add_column("类别", style="bold")
+    table.add_column("Precision", justify="left")
+    table.add_column("Recall", justify="left")
+
+    # "all" 置顶，其余按名称排序
+    keys = sorted(metric.keys(), key=lambda k: (k != "all", str(k)))
+    for cls in keys:
+        m = metric.get(cls) or {}
+        if not isinstance(m, dict):
+            continue
+        # 兼容 API 拼写 "percision"
+        p = m.get("precision", m.get("percision"))
+        r = m.get("recall")
+        table.add_row(str(cls), _bar(p), _bar(r))
+    console.print(table)
+
+
 @app.command("metrics")
 def task_metrics(
     task_id: str = typer.Argument(help="训练任务 ID"),
     model_type: str = typer.Option(..., "--model-type", help="(必填) " + HELP_MODEL_TYPE),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     execution_id: Optional[str] = typer.Option(None, "--execution-id", help="执行 ID，不传则自动获取"),
-    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+    fmt: str = typer.Option(
+        "chart", "-o", "--output",
+        help="输出格式：chart(默认，终端绘制 loss 曲线 + precision/recall 进度条) | "
+             "json(供 skill/agent 读取原始 JSON) | yaml | table",
+    ),
 ):
-    """查询训练任务指标 loss / metric (3.13.1)"""
+    """查询训练任务指标 loss / metric (3.13.1)
+
+    - 默认 chart：loss-epoch 二维曲线 + 每个类别的 precision/recall 进度条（标注百分比）
+    - skill/agent 请用 -o json 读取结构化原始数据
+    """
     client = PanguClient()
     if not execution_id:
         detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
@@ -460,7 +548,16 @@ def task_metrics(
         METRIC_PATH, workspace_id=workspace,
         params={"model_type": model_type}, execution_id=execution_id,
     )
-    output(data, fmt=fmt)
+
+    if fmt in ("json", "yaml", "id"):
+        output(data, fmt=fmt)
+        return
+
+    loss = data.get("loss") if isinstance(data, dict) else None
+    metric = data.get("metric") if isinstance(data, dict) else None
+    _render_loss_curve(loss or [])
+    console.print()
+    _render_metric_bars(metric or {})
 
 
 @app.command("checkpoints")

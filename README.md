@@ -377,7 +377,10 @@ pangu training logs <task_id> --node worker-0
 pangu training nodes <task_id>
 
 # 查看训练指标 loss / metric
-pangu training metrics <task_id> --model-type NLP
+#   默认 -o chart：终端绘制 loss-epoch 二维曲线 + 每类别 precision/recall 进度条（带百分比）
+#   skill/agent 请用 -o json 读取结构化原始 JSON
+pangu training metrics <task_id> --model-type NLP              # 可视化（默认）
+pangu training metrics <task_id> --model-type NLP -o json      # 原始 JSON（供 skill）
 
 # 查看断点 Checkpoint 列表（分页）
 pangu training checkpoints <task_id> --limit 20 --page 1

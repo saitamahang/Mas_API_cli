@@ -418,7 +418,7 @@ def publish_dataset(
         "IMAGE_INSTANCE_SEGMENTATION (实例分割) | IMAGE_CHANGE_DETECTION (变化检测) | "
         "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)"
     )),
-    publish_format: Optional[str] = typer.Option(None, "--publish-format", help="发布格式: DEFAULT (标准格式) | PANGU (盘古格式) | USER_DEFINED (自定义格式)"),
+    publish_format: str = typer.Option("PANGU", "--publish-format", help="发布格式: DEFAULT (标准格式) | PANGU (盘古格式，默认) | USER_DEFINED (自定义格式)"),
     is_global: bool = typer.Option(False, "--global", help="全空间可见"),
     description: Optional[str] = typer.Option(None, "--description", "-d", help="描述"),
     config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径，命令行参数覆盖文件内值"),
@@ -454,7 +454,7 @@ def publish_dataset(
         "datasets":          datasets_payload,
     }
     if description:    body["description"] = description
-    if publish_format: body["publish_format"] = publish_format
+    body["publish_format"] = publish_format
 
     if config:
         p = Path(config)

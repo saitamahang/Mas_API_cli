@@ -320,26 +320,35 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 # 查看详情
 pangu training get <task_id>
 
-# 创建前：先取 task_parameter 模板（3.13.11）
+# 推荐流程：先用 scaffold 生成 YAML 模板（内部自动调 model-detail 拉 task_parameter）
+pangu training scaffold \
+  --model-id <model_id> --model-type NLP --train-type SFT --model-source pangu \
+  --asset-id <asset_id> \
+  --out train.yaml
+
+# 编辑 train.yaml 里的 TODO 字段（task_name / pool_id / chip_type / flavor_id / t_flops 或给齐 nodes+flavor+flavor_id 自动推导）
+
+# 预检请求体（不会发送，skill 调试首选）
+pangu training create -f train.yaml --dry-run
+
+# 真实提交
+pangu training create -f train.yaml
+
+# 也可直接用 model-detail 看原始返回（含 chip_type 可选值、parameters 约束等）
 pangu training model-detail \
-  --model-id <model_id> \
-  --model-type NLP \
-  --train-type SFT \
-  --model-source pangu -o yaml > task_params.yaml
+  --model-id <model_id> --model-type NLP --train-type SFT --model-source pangu
 
-# 创建任务（必须走 YAML；task_parameter 结构来自 model-detail 的 workflow_info.parameters）
-pangu training create -f examples/training_create.yaml
-
-# 创建任务（命令行覆盖 YAML；必填: task_name / asset_id / model_type / train_type / model_source / t_flops / task_parameter）
-pangu training create -f examples/training_create.yaml \
+# 命令行覆盖 YAML（必填: task_name / asset_id / model_type / train_type / model_source / t_flops / task_parameter）
+# 同时给齐 --nodes / --flavor-id / --flavor 时 t_flops 会自动推导为 nodes × flavor_id × flavor
+pangu training create -f train.yaml \
   --name my-finetune \
   --asset-id <asset_id> \
   --model-id <model_id> \
   --model-type NLP --train-type SFT --model-source pangu \
   --dataset-id <ds_id> --dataset-name ds-train --dataset-version-id v1 \
   --eval-dataset-id <eval_id> --dataset-split-ratio 10 \
-  --pool-id <pool_id> --pool-type private --chip-type Snt9B3 --flavor-id 8 \
-  --nodes 1 --flavor 313 --t-flops 313 \
+  --pool-id <pool_id> --pool-type private --chip-type Snt9B3 \
+  --flavor-id 8 --nodes 1 --flavor 313 \
   --plog-level 0
 
 # 量化训练

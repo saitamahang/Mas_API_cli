@@ -193,6 +193,68 @@ def delete_task(
     console.print(f"[green]成功删除: {data.get('success_num', '?')} 个，失败: {data.get('failed_num', '?')} 个[/green]")
 
 
+# ------------------------------ scaffold ------------------------------
+
+@app.command("scaffold")
+def scaffold(
+    model_id: str = typer.Option(..., "--model-id", help="模型 ID，预置模型时 = asset_id"),
+    model_type: str = typer.Option(..., "--model-type", help="(必填) " + HELP_MODEL_TYPE),
+    train_type: str = typer.Option(..., "--train-type", help="(必填) " + HELP_TRAIN_TYPE),
+    model_source: str = typer.Option(..., "--model-source", help="(必填) " + HELP_MODEL_SRC),
+    strategy: Optional[str] = typer.Option(None, "--strategy", help="策略 (可选)"),
+    asset_id: Optional[str] = typer.Option(None, "--asset-id", help="已知的 asset_id，直接填入模板；不传则留 TODO 占位"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    out_file: Optional[str] = typer.Option(None, "--out", help="写入到指定文件；不传则打印到 stdout (便于 `> train.yaml`)"),
+):
+    """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
+
+    内部调用 model-detail 拿到 workflow_info.parameters 作为 task_parameter，
+    其余必填字段用 TODO 占位。生成后只需补齐 asset_id / task_name / 资源配置即可提交。
+    """
+    client = PanguClient()
+    detail_body: dict = {
+        "model_id":     model_id,
+        "model_type":   model_type,
+        "train_type":   train_type,
+        "model_source": model_source,
+    }
+    if strategy:
+        detail_body["strategy"] = strategy
+
+    detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
+    parameters = (detail.get("workflow_info") or {}).get("parameters") or []
+
+    skeleton = {
+        "task_name":       "TODO-请填写任务名称",
+        "asset_id":        asset_id or "TODO-pangu model list 获取 asset_id",
+        "model_id":        model_id,
+        "model_type":      model_type,
+        "train_type":      train_type,
+        "model_source":    model_source,
+        "train_task_desc": "",
+        "pool_node_count": 1,
+        "flavor":          313,
+        "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
+        "resource_config": {
+            "pool_id":   "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)",
+            "pool_type": "private",
+            "chip_type": "TODO-如 Snt9B3 / Snt9B4",
+            "flavor_id": "TODO-专属池取 1|2|4|8",
+        },
+        "task_parameter": {
+            "parameters": parameters,
+        },
+    }
+
+    text = yaml.safe_dump(skeleton, allow_unicode=True, sort_keys=False)
+    if out_file:
+        Path(out_file).write_text(text, encoding="utf-8")
+        console.print(f"[green]已写入 {out_file}（含 {len(parameters)} 个训练参数）[/green]")
+        console.print("[cyan]下一步：编辑其中 TODO 项，然后 `pangu training create -f " + out_file + " --dry-run` 预览[/cyan]")
+    else:
+        typer.echo(text)
+
+
 # ------------------------------ create ------------------------------
 
 @app.command("create")
@@ -227,12 +289,13 @@ def create_task(
     flavor_id: Optional[str] = typer.Option(None, "--flavor-id", help="规格卡数，专属池取 1 | 2 | 4 | 8"),
     nodes: Optional[int] = typer.Option(None, "--nodes", help="资源池节点数 pool_node_count，默认 1；flavor_id=8 时 >1 即多机多卡 (0-10000)"),
     flavor: Optional[int] = typer.Option(None, "--flavor", help="资源池算力规格，常见 313 | 280 (0-10000)"),
-    t_flops: Optional[int] = typer.Option(None, "--t-flops", help="(必填) 总算力数 = 卡数 × flavor (0-2147483647)"),
+    t_flops: Optional[int] = typer.Option(None, "--t-flops", help="(必填) 总算力 = 卡数 × flavor；不传且同时传了 --nodes / --flavor-id / --flavor 时自动按 nodes × flavor_id × flavor 推导"),
     # 其他
     plog_level: Optional[int] = typer.Option(None, "--plog-level", help=HELP_PLOG_LEVEL + " (默认 -1)"),
     is_input_finished: Optional[int] = typer.Option(None, "--is-input-finished", help="训练参数是否已全部输入 (默认 1)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待任务跑到终态 (completed/failed/stopped)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只组装并打印请求体 (YAML)，不实际提交 API；skill 预检/调试用"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table | json | yaml"),
 ):
     """创建训练任务 (3.13.5)
@@ -275,13 +338,33 @@ def create_task(
         if chip_type: rc["chip_type"] = chip_type
         if flavor_id: rc["flavor_id"] = flavor_id
 
+    # t_flops 自动推导：用户没传 t_flops 但给齐了 nodes / flavor_id / flavor 时，按 PDF 公式（卡数 × flavor）推导
+    if body.get("t_flops") in (None, 0):
+        rc_for_calc = body.get("resource_config") or {}
+        n  = body.get("pool_node_count")
+        fi = rc_for_calc.get("flavor_id")
+        fv = body.get("flavor")
+        try:
+            n, fi, fv = int(n), int(fi), int(fv)
+            body["t_flops"] = n * fi * fv
+            console.print(f"[cyan]自动推导 t_flops = nodes({n}) × flavor_id({fi}) × flavor({fv}) = {body['t_flops']}[/cyan]")
+        except (TypeError, ValueError):
+            pass  # 缺任一项就不推，留给下面必填校验报错
+
     # PDF 明确必填：asset_id / task_name / model_type / train_type / model_source / t_flops / task_parameter
     for req in ("asset_id", "task_name", "model_type", "train_type", "model_source", "t_flops", "task_parameter"):
         if body.get(req) in (None, "", {}, []):
             console.print(f"[red]缺少必填字段: {req}[/red]")
             if req == "task_parameter":
-                console.print("[yellow]task_parameter 结构较复杂，请先调 `pangu training model-detail` 获取后写入 YAML[/yellow]")
+                console.print("[yellow]task_parameter 结构较复杂，请先调 `pangu training scaffold` 或 `model-detail` 获取模板[/yellow]")
+            if req == "t_flops":
+                console.print("[yellow]未传 --t-flops 且 --nodes / --flavor-id / --flavor 未同时给齐，无法自动推导[/yellow]")
             raise typer.Exit(1)
+
+    if dry_run:
+        console.print("[cyan]--dry-run：以下为将提交的请求体（未发送到 API）[/cyan]")
+        typer.echo(yaml.safe_dump(body, allow_unicode=True, sort_keys=False))
+        return
 
     client = PanguClient()
     data = client.post(CREATE_PATH, workspace_id=workspace, json=body)

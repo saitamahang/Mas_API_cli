@@ -36,6 +36,16 @@ PROCESS_JOBS_PATH = "/v2/{project_id}/workspaces/{workspace_id}/data-cleaning/jo
 # 算子列表
 OPERATORS_PATH   = "/v1/{project_id}/workspaces/{workspace_id}/operator-manager/operator-list"
 
+# content_type -> 允许的 file_format（按官方文档的固定对应关系）
+# 导入时若 content_type 命中此表，file_format 必须为指定值；未传则自动补齐。
+CONTENT_TYPE_FILE_FORMAT: dict[str, str] = {
+    "IMAGE_OBJECT_DETECTION":       "PASCAL",    # 物体检测
+    "IMAGE_CLASSIFICATION":         "IMAGE_TXT", # 图像分类
+    "IMAGE_ANOMALY_DETECTION":      "IMAGE_TXT", # 异常检测
+    "IMAGE_SEMANTIC_SEGMENTATION":  "IMAGE_PNG", # 语义分割
+    "IMAGE_INSTANCE_SEGMENTATION":  "IMAGE_XML", # 实例分割
+}
+
 
 LIST_COLUMNS = [
     ("id",           "数据集 ID"),
@@ -299,11 +309,12 @@ def import_data(
         "VIDEO_EVENT_DETECTION (事件检测) | VIDEO_CLASSIFICATION (视频分类) | "
         "TIME_SERIES_PREDICT (时序) | REGRESSION_CLASSIFICATION (回归分类) | "
         "IMAGE (仅图片) | IMAGE_AND_CAPTION (图片+Caption) | IMAGE_AND_QA (图片+QA对) | "
-        "IMAGE_AND_CV_ANNOTATION (图片+CV标注) | IMAGE_OBJECT_DETECTION (物体检测) | "
-        "IMAGE_CLASSIFICATION (图像分类) | IMAGE_ANOMALY_DETECTION (异常检测) | "
-        "IMAGE_SEMANTIC_SEGMENTATION (语义分割) | IMAGE_POSE_ESTIMATION (姿态估计) | "
-        "IMAGE_INSTANCE_SEGMENTATION (实例分割) | IMAGE_CHANGE_DETECTION (变化检测) | "
-        "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)"
+        "IMAGE_AND_CV_ANNOTATION (图片+CV标注) | IMAGE_OBJECT_DETECTION (物体检测→PASCAL) | "
+        "IMAGE_CLASSIFICATION (图像分类→IMAGE_TXT) | IMAGE_ANOMALY_DETECTION (异常检测→IMAGE_TXT) | "
+        "IMAGE_SEMANTIC_SEGMENTATION (语义分割→IMAGE_PNG) | IMAGE_POSE_ESTIMATION (姿态估计) | "
+        "IMAGE_INSTANCE_SEGMENTATION (实例分割→IMAGE_XML) | IMAGE_CHANGE_DETECTION (变化检测) | "
+        "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)。"
+        "标“→”的 content_type 与 file_format 固定关联，未传 --file-format 时自动补齐"
     )),
     file_source: str = typer.Option("OBS", "--file-source", help="文件来源: OBS (自己的 OBS 桶路径) | LOCAL (本地终端文件目录) | GALLERY (AIhub 订阅数据集)"),
     file_format: Optional[str] = typer.Option(None, "--file-format", help=(
@@ -313,7 +324,8 @@ def import_data(
         "JPG_XML | JPEG_XML | PNG_XML | BMP_XML | "
         "PASCAL | YOLO | "
         "IMAGE_JSON | IMAGE_PNG | IMAGE_TXT | IMAGE_XML | "
-        "VIDEO_JSON | VIDEO_TXT | USER_DEFINED"
+        "VIDEO_JSON | VIDEO_TXT | USER_DEFINED。"
+        "图像类 content_type 与 file_format 固定关联，未传则自动补齐；传入不匹配值会报错"
     )),
     desc: Optional[str] = typer.Option(None, "--desc", help="数据集描述"),
     config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径，命令行参数覆盖文件内值"),
@@ -345,6 +357,20 @@ def import_data(
     if missing:
         console.print(f"[red]缺少必填项: {', '.join(missing)}[/red]")
         raise typer.Exit(1)
+
+    # content_type 与 file_format 的固定关联校验：命中表则必须匹配，未传则自动补齐
+    required_fmt = CONTENT_TYPE_FILE_FORMAT.get(body["content_type"])
+    if required_fmt:
+        actual_fmt = body.get("file_format")
+        if actual_fmt and actual_fmt != required_fmt:
+            console.print(
+                f"[red]content_type={body['content_type']} 要求 file_format={required_fmt}，"
+                f"当前传入 {actual_fmt}[/red]"
+            )
+            raise typer.Exit(1)
+        if not actual_fmt:
+            body["file_format"] = required_fmt
+            console.print(f"[cyan]自动设置 file_format={required_fmt} (由 content_type 决定)[/cyan]")
 
     data = client.post(IMPORT_JOBS_PATH, workspace_id=workspace, json=body)
     job_id = data.get("id", "")

@@ -389,24 +389,39 @@ pangu dataset delete <name> -y              # 跳过确认
 pangu dataset purge <name> --catalog ORIGINAL
 pangu dataset purge <name> --delete-obs -y
 
-# 从 OBS 导入数据（name / obs-path / content-type 必填）
+# 从 OBS 导入数据（name / obs-path / content-type 必填；obs-path 不含 obs:// 前缀，传入也会自动剥离）
 pangu dataset import \
   --name my-dataset \
-  --obs-path obs://my-bucket/data/ \
+  --obs-path my-bucket/data/ \
   --content-type PRE_TRAINED_TEXT \
   --file-format JSONL
+
+# 图像类 content_type 与 file_format 固定关联，未传会自动补齐：
+#   IMAGE_OBJECT_DETECTION       → PASCAL
+#   IMAGE_CLASSIFICATION         → IMAGE_TXT
+#   IMAGE_ANOMALY_DETECTION      → IMAGE_TXT
+#   IMAGE_SEMANTIC_SEGMENTATION  → IMAGE_PNG
+#   IMAGE_INSTANCE_SEGMENTATION  → IMAGE_XML
+pangu dataset import --name cls --obs-path bucket/img/ --content-type IMAGE_CLASSIFICATION
 
 # 用 YAML 配置导入并等待完成
 pangu dataset import -f examples/dataset_import.yaml --wait
 
-# 发布数据集（命令行）
+# 发布单个数据集（命令行；会自动按名称查询 dataset_id 并补入请求体）
 pangu dataset publish \
   --publish-name my-pub-v1 \
   --source-name my-dataset \
   --source-catalog ORIGINAL \
   --file-content-type SINGLE_QA
 
-# 发布数据集（YAML 混合，配置文件覆盖命令行默认值）
+# 合并发布多个数据集（--source-name 可多次传入，共用同一 --source-catalog）
+pangu dataset publish \
+  --publish-name merged-v1 \
+  --source-name ds-a --source-name ds-b --source-name ds-c \
+  --source-catalog ORIGINAL \
+  --file-content-type SINGLE_QA
+
+# 发布数据集（YAML 混合，配置文件覆盖命令行默认值；YAML 中可整体指定 datasets 数组）
 pangu dataset publish --publish-name v1 --source-name ds --file-content-type SINGLE_QA -f publish.yaml
 
 # 数据加工（task_operators 字段较多，必须走 YAML）

@@ -401,8 +401,8 @@ def import_data(
 @app.command("publish")
 def publish_dataset(
     publish_name: str = typer.Option(..., "--publish-name", help="发布后数据集名称（必填）"),
-    source_name: str = typer.Option(..., "--source-name", help="来源数据集名称（必填）"),
-    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
+    source_names: List[str] = typer.Option(..., "--source-name", help="来源数据集名称（必填，可多次传入以合并发布多个数据集）"),
+    source_catalog: str = typer.Option("ORIGINAL", "--source-catalog", help="来源类别 (所有 --source-name 共用): ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     file_content_type: str = typer.Option(..., "--file-content-type", help=(
         "内容类型 (必填): "
         "SINGLE_QA (单轮问答) | SINGLE_QA_MAN (单轮问答人设) | MULTI_QA (多轮问答) | MULTI_QA_MAN (多轮问答人设) | "
@@ -428,15 +428,30 @@ def publish_dataset(
     """发布数据集（创建数据发布任务）"""
     client = PanguClient()
 
+    # 逐个查询数据集详情，补齐 dataset_id（API 非必填，但带上便于服务端定位与审计）
+    datasets_payload: list[dict] = []
+    for nm in source_names:
+        detail = client.get(
+            DETAIL_PATH_V2,
+            workspace_id=workspace,
+            params={"catalog": source_catalog},
+            dataset_name=nm,
+        )
+        ds_id = detail.get("dataset_id") or detail.get("id") or ""
+        if not ds_id:
+            console.print(f"[yellow]警告: 数据集 {nm} (catalog={source_catalog}) 未查到 dataset_id，仍按名称发布[/yellow]")
+        datasets_payload.append({
+            "dataset_id":   ds_id,
+            "dataset_name": nm,
+            "catalog":      source_catalog,
+        })
+
     body: dict = {
         "job_type":          "CIRCULATION",
         "publish_name":      publish_name,
         "file_content_type": file_content_type,
         "is_global":         is_global,
-        "datasets": [{
-            "dataset_name": source_name,
-            "catalog":      source_catalog,
-        }],
+        "datasets":          datasets_payload,
     }
     if description:    body["description"] = description
     if publish_format: body["publish_format"] = publish_format

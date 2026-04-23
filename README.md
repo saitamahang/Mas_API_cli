@@ -287,70 +287,109 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 > 训练任务的主键为 `task_id`，状态字段为 `task_status`。
 > 日志、节点、指标、断点等命令需要 `execution_id`，工具会自动从任务详情中获取，也可通过 `--execution-id` 手动指定。
 
+**创建训练任务的必填项及来源**（`pangu training create` 校验的字段）：
+
+| 字段 | 来源 / 获取方式 |
+|---|---|
+| `task_name` | 用户自定义，数字/中文/字母/-/_，≤64 字符，不以数字开头 |
+| `asset_id` | `pangu model list` → 选一个模型资产的 `asset_id` |
+| `model_id`（NLP/MM 必填） | 预置模型时 = `asset_id`；训练后产物取自 `pangu training models <task_id>` |
+| `model_type` | 固定枚举 `NLP / MM / CV / Predict / AI4Science` |
+| `train_type` | 固定枚举 `SFT / PRETRAIN / LORA / DPO / RFT`，默认 `SFT` |
+| `model_source` | 固定枚举 `pangu / third / pangu-third` |
+| `t_flops` | 整数：卡数 × flavor（`pangu pool list` 看 flavor，常见 313 / 280） |
+| `task_parameter` | 复杂对象，**必须先调 `pangu training model-detail` 取 `workflow_info.parameters` 作模板**，改写后放入 YAML |
+
+> `task_parameter` 结构因 `model_id + train_type` 组合而异（learning_rate / warmup / batch_size / training_flavor / sfs_* 等几十项），不能凭空写。固定流程：`model-detail` → 改参数 → `create`。
+
+**核心枚举**（按《训练任务管理 API》权威定义）：
+
+| 字段 | 取值 |
+|---|---|
+| `--model-type` | `NLP` (NLP大模型) · `MM` (多模态) · `CV` · `Predict` (预测) · `AI4Science` (科学计算) |
+| `--train-type` | `SFT` (全量微调) · `PRETRAIN` (预训练) · `LORA` (lora) · `DPO` · `RFT` |
+| `--model-source` | `pangu` (预置) · `third` (三方) · `pangu-third` (盘古提供的三方) |
+| `--visibility` (publish) | `current` (当前空间) · `all` (全部空间) |
+| `--category` (publish) | `pangu` · `3rd` · `pangu-poc` · `pangu-iit` · `3rd-pangu` |
+| `--action-type` (models) | `PRETRAIN` · `SFT` · `LORA` · `QUANTIZATION` · `DPO` |
+| `--status` (models) | `published` · `unpublished` |
+| `--plog-level` | `-1`(不开启) · `0`(info) · `1`(debug) · `2`(warning) · `3`(error) |
+| task_status | `init` · `wait_created` · `pending` · `running` · `stopping` · `stopped` · `failed` · `completed` |
+
 ```bash
 # 查看详情
 pangu training get <task_id>
 
-# 创建任务（YAML 配置，推荐）
-pangu training create -f examples/training_create.yaml
-
-# 创建任务（命令行参数，必填项较多）
-pangu training create \
-  --name my-finetune \
-  --asset-id <asset_id> \
+# 创建前：先取 task_parameter 模板（3.13.11）
+pangu training model-detail \
   --model-id <model_id> \
   --model-type NLP \
   --train-type SFT \
-  --model-source pangu \
-  --t-flops 313 \
-  --pool-id <pool_id> \
-  --nodes 1
+  --model-source pangu -o yaml > task_params.yaml
 
-# 创建并等待完成
+# 创建任务（必须走 YAML；task_parameter 结构来自 model-detail 的 workflow_info.parameters）
+pangu training create -f examples/training_create.yaml
+
+# 创建任务（命令行覆盖 YAML；必填: task_name / asset_id / model_type / train_type / model_source / t_flops / task_parameter）
+pangu training create -f examples/training_create.yaml \
+  --name my-finetune \
+  --asset-id <asset_id> \
+  --model-id <model_id> \
+  --model-type NLP --train-type SFT --model-source pangu \
+  --dataset-id <ds_id> --dataset-name ds-train --dataset-version-id v1 \
+  --eval-dataset-id <eval_id> --dataset-split-ratio 10 \
+  --pool-id <pool_id> --pool-type private --chip-type Snt9B3 --flavor-id 8 \
+  --nodes 1 --flavor 313 --t-flops 313 \
+  --plog-level 0
+
+# 量化训练
+pangu training create -f quant.yaml --quantization-type QUANTIZATION-W8A8C --output-artifact-name my-quant
+
+# 断点续训
+pangu training create -f resume.yaml --checkpoint-id <ckpt_uuid>
+
+# 创建并等待完成（终态 completed / failed / stopped）
 pangu training create -f examples/training_create.yaml --wait
 
-# 停止任务（状态为 running/pending 时可用）
+# 停止任务（状态为 running / pending 时可用）
 pangu training stop <task_id>
 
 # 重试任务（状态为 failed 时可用）
-pangu training retry <task_id>
 pangu training retry <task_id> --wait
 
 # 批量删除（可传多个 task_id）
 pangu training delete <task_id1> <task_id2>
 
-# 查看训练日志（自动获取 execution_id 和 job_id）
+# 查看训练日志（自动获取 execution_id / job_id / worker 节点）
 pangu training logs <task_id>
 pangu training logs <task_id> --node worker-0
 
-# 查看训练节点信息
+# 查看训练节点信息（用于拿 worker-N 节点名供 logs 使用）
 pangu training nodes <task_id>
 
-# 查看训练指标
+# 查看训练指标 loss / metric
 pangu training metrics <task_id> --model-type NLP
 
-# 查看断点 Checkpoint 列表
-pangu training checkpoints <task_id>
+# 查看断点 Checkpoint 列表（分页）
+pangu training checkpoints <task_id> --limit 20 --page 1
 
-# 发布模型到资产中心（asset-name 和 visibility 必填）
+# 发布模型到资产中心（asset-name / visibility 必填，category 默认 pangu）
 pangu training publish <task_id> --asset-name my-model-v1 --visibility current
+pangu training publish <task_id> --asset-name q8-v1 --visibility all --category 3rd
 
-# 查看训练任务产生的模型列表（execution_id 必填，自动从任务详情获取）
+# 查看训练任务产生的模型列表（execution_id 自动从任务详情获取）
 pangu training models <task_id>
-pangu training models <task_id> --model-type NLP --action-type SFT
+pangu training models <task_id> --model-type NLP --action-type SFT --status published
 
-# 获取模型详情（创建训练任务前用于查询 task_parameter 模板，3.13.11）
-pangu training model-detail \
-  --model-id <model_id> \
-  --model-type NLP \
-  --train-type SFT \
-  --model-source pangu
+# AI 科学计算（气象）场景
+pangu training models <task_id> --weather-job-type <type> --weather-data-config <cfg>
 
-# 查询时间范围内的资源用量（start-time 和 end-time 必填）
+# 查询时间范围内的资源用量（start-time / end-time 必填）
 pangu training usage --start-time 2024-01-01T00:00:00 --end-time 2024-01-31T23:59:59
 
-# 查询指定资源池上运行的任务（pool_id 必填）
+# 查询指定资源池 / 节点上运行的任务
 pangu training running <pool_id>
+pangu training running <pool_id> --node-ip 192.168.0.10
 ```
 
 ---

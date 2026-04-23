@@ -17,8 +17,8 @@ console = Console()
 
 # v2 列表接口（带分页、过滤、总数）
 LIST_PATH        = "/v2/{project_id}/workspaces/{workspace_id}/data-management/datasets"
-# v2 详情
-DETAIL_PATH_V2   = "/v2/{project_id}/workspaces/{workspace_id}/data-management/datasets/{dataset_name}"
+# 详情（走 v1：v2 详情接口当前不返回 dataset_id，无法支撑发布时的 ID 回填）
+DETAIL_PATH_V1   = "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/{dataset_name}"
 # 批量查询
 BATCH_GET_PATH   = "/v1/{project_id}/workspaces/{workspace_id}/data-management/datasets"
 # 批量删除（软删）
@@ -207,7 +207,7 @@ def get_dataset(
     """查询数据集详情（按名称+类别）"""
     client = PanguClient()
     data = client.get(
-        DETAIL_PATH_V2,
+        DETAIL_PATH_V1,
         workspace_id=workspace,
         params={"catalog": catalog},
         dataset_name=dataset_name,
@@ -432,7 +432,7 @@ def publish_dataset(
     datasets_payload: list[dict] = []
     for nm in source_names:
         detail = client.get(
-            DETAIL_PATH_V2,
+            DETAIL_PATH_V1,
             workspace_id=workspace,
             params={"catalog": source_catalog},
             dataset_name=nm,

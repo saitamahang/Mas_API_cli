@@ -192,7 +192,8 @@ pangu workspace delete <workspace_id> -y   # 跳过确认
 ```bash
 pangu pool list
 pangu pool list --arch ARM
-pangu pool list --job-type Train --status created
+pangu pool list --job-type Train --status created     # HCS 用大写驼峰：Train | Infer
+pangu pool list --job-type Infer
 pangu pool list -w <workspace_id>
 ```
 
@@ -200,6 +201,8 @@ pangu pool list -w <workspace_id>
 
 ```bash
 # job-type、chip-type、use-type 为 HC 环境 API 必填项
+# ⚠️ HC 环境下 --job-type 取值为小写：train (训练作业) | infer (推理作业)
+#    HCS 与 HC 大小写不同，切换环境时记得改入参
 pangu pool list --job-type train --chip-type D910B3 --use-type private
 pangu pool list --job-type infer --chip-type D910B3 --use-type poc
 ```

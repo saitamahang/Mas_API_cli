@@ -200,9 +200,12 @@ pangu pool list -w <workspace_id>
 **HC 环境**（需先 `pangu config set env_type HC`）：
 
 ```bash
-# job-type、chip-type、use-type 为 HC 环境 API 必填项
-# ⚠️ HC 环境下 --job-type 取值为小写：train (训练作业) | infer (推理作业)
-#    HCS 与 HC 大小写不同，切换环境时记得改入参
+# ⚠️ HC 接口 --job-type / --use-type / --chip-type 三者均为必填，CLI 不会代为补默认值
+#    常用默认建议（请在命令行显式传入，不要依赖隐式默认）：
+#       --job-type   train | infer    （小写，HC 接口要求）
+#       --use-type   private          （建议默认值）
+#       --chip-type  D910B3           （建议默认值，可多次传入支持多卡）
+#    （HCS 用大写驼峰 Train/Infer，HC 用小写 train/infer，切环境时记得改）
 pangu pool list --job-type train --chip-type D910B3 --use-type private
 pangu pool list --job-type infer --chip-type D910B3 --use-type poc
 ```

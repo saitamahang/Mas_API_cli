@@ -38,8 +38,8 @@ def list_pools(
     filter_status: Optional[str] = typer.Option(None, "--status", help="[HCS] 资源池状态: created (创建成功) | creating (创建中) | failed (创建失败，记录保留3天)"),
     # HC 参数
     job_type: Optional[str] = typer.Option(None, "--job-type", help="作业类型 — HCS: Train (训练) | Infer (推理) 大写驼峰；HC: train | infer 小写（HC 必填）"),
-    chip_types: Optional[List[str]] = typer.Option(None, "--chip-type", help="[HC] 卡类型，可多次传入（取值由实际资源规格决定，非固定枚举）"),
-    use_type: Optional[str] = typer.Option(None, "--use-type", help="[HC] 使用类型（取值由业务场景决定，非固定枚举）"),
+    chip_types: Optional[List[str]] = typer.Option(None, "--chip-type", help="[HC 必填] 卡类型，可多次传入；常用值 D910B3（默认建议值，未传时不在代码侧自动补，需显式 --chip-type D910B3）"),
+    use_type: Optional[str] = typer.Option(None, "--use-type", help="[HC 必填] 使用类型；常用值 private（默认建议值，未传时不在代码侧自动补，需显式 --use-type private）"),
     flavor_ids: Optional[List[str]] = typer.Option(None, "--flavor-id", help="[HC] 资源规格 ID，可多次传入"),
     asset_code: Optional[str] = typer.Option(None, "--asset-code", help="[HC] 资产编码"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table (表格) | json | yaml | id (仅 ID 列表)"),

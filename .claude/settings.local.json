@@ -17,7 +17,8 @@
       "Bash(pip show *)",
       "Bash(/usr/bin/python3 -c \"import pypdf; r=pypdf.PdfReader\\('/Users/liyuhang/Code/1.Mas_API_cli/数据集.pdf'\\); print\\(len\\(r.pages\\)\\)\")",
       "Bash(pip3 show *)",
-      "Bash(PYTHONPATH=src python3 -c \"from pangu.commands.training import app; print\\('training.py OK'\\)\")"
+      "Bash(PYTHONPATH=src python3 -c \"from pangu.commands.training import app; print\\('training.py OK'\\)\")",
+      "Bash(grep -n \"^pangu \\\\|^### \\\\|^---$\" /Users/liyuhang/Code/1.Mas_API_cli/README.md)"
     ]
   }
 }

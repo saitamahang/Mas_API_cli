@@ -208,23 +208,43 @@ pangu pool list --job-type infer --chip-type D910B3 --use-type poc
 
 ### 模型资产管理
 
+对应 API 3.12.1 ~ 3.12.5。注意 `list` 与 `list-ext` 是两个不同接口，过滤能力和响应结构不同：
+
 ```bash
-# 查询列表
-pangu model list
-pangu model list --type NLP --category pangu
-pangu model list --name "盘古" --limit 10
+# 3.12.1 查询资产列表（响应为 Array<Array<ModelAsset>>，CLI 已自动展平）
+pangu model list                                  # 当前空间全部
+pangu model list --type NLP --category pangu      # 按模型类型 + 分类
+pangu model list --source Preset                  # 仅预置模型  (Preset|Publish|Import|"AI Hub")
+pangu model list --action-type SFT                # 按操作类型 (PRETRAIN|SFT|RLHF|TRANSFORM|QUANTIZATION|EVALUATION|ONLINE-DEPLOY|EDGE-DEPLOY)
+pangu model list --sub-type Weather_24h           # 子类型精确匹配（科学计算）
+pangu model list --sub-type-snip Weather          # 子类型模糊搜索（仅科学计算生效）
+pangu model list --asset-id id1 --asset-id id2    # 多个 asset_id 过滤
+pangu model list --asset-code Pangu-NLP-N1-...    # 按模型族谱编码
+pangu model list --feature 7B                     # NLP 存储参数量 / 科学计算时间分辨率
+pangu model list --user-id <uid> --no-op-user     # 按发布用户过滤（is_op_user=0 必搭配）
+pangu model list --workspace-source others        # 来自其他空间 (current|others)
 
-# 查看详情
+# 3.12.2 查询资产详情
 pangu model get <asset_id>
+pangu model get <asset_id> --all-actions                     # 展示模型支持的全部 actions
+pangu model get <asset_id> --action-asset-tag NLP-N1-PERTRAIN
 
-# 含部署信息的完整列表
+# 3.12.3 获取完整模型列表（含 can_deploy/can_train/can_eval/is_used 等能力标识）
+#   CLI 已把嵌套的 modelAsset.* 展平到顶层，方便表格展示
 pangu model list-ext
+pangu model list-ext --type NLP,CV --visibility current --sort desc
+pangu model list-ext --name-snip Pangu --asset-action SFT,LORA
+pangu model list-ext --source AIGallery                      # 订阅模型 (3.12.3 使用 AIGallery，不是 "AI Hub")
 
-# 导出为 ModelArts Site 格式
-pangu model export <asset_id>
+# 3.12.4 导出 ModelArts Site 格式（--export-obs-path / --esn 均必填）
+pangu model export <asset_id> \
+    --export-obs-path obs://my-bucket/export-dir/ \
+    --esn G3M3ER2CT32SJ7RYDBB7MFFBKNB77QM7XQQA
 
-# 查询导出任务
-pangu model export-tasks <asset_id>
+# 3.12.5 查询模型迁移/导出任务列表（无 asset_id；覆盖 import/export/publish/subscribe）
+pangu model export-tasks
+pangu model export-tasks --direction export --status Exporting
+pangu model export-tasks --type model --sort-by desc --limit 50
 ```
 
 ---

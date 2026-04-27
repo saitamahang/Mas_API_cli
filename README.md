@@ -322,11 +322,35 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 | `model_id`（NLP/MM 必填） | 预置模型时 = `asset_id`；训练后产物取自 `pangu training models <task_id>` |
 | `model_type` | 固定枚举 `NLP / MM / CV / Predict / AI4Science` |
 | `train_type` | 固定枚举 `SFT / PRETRAIN / LORA / DPO / RFT`，默认 `SFT` |
-| `model_source` | 固定枚举 `pangu / third / pangu-third` |
-| `t_flops` | 整数：卡数 × flavor（`pangu pool list` 看 flavor，常见 313 / 280） |
+| `model_source` | 固定枚举 `pangu / third / pangu-third`（**仅 3.13.5 create 接口** 的取值；不要与 3.13.11 model-detail 的 `SYSTEM/USER` 混用） |
+| `t_flops` | **[HCS 必填]** 整数：卡数 × flavor（`pangu pool list` 看 flavor，常见 313 / 280）。HC 模式下不需要此字段 |
 | `task_parameter` | 复杂对象，**必须先调 `pangu training model-detail` 取 `workflow_info.parameters` 作模板**，改写后放入 YAML |
 
 > `task_parameter` 结构因 `model_id + train_type` 组合而异（learning_rate / warmup / batch_size / training_flavor / sfs_* 等几十项），不能凭空写。固定流程：`model-detail` → 改参数 → `create`。
+
+#### 资源池注入方式（随 env_type 不同）
+
+| env_type | 写入位置 | 关键字段 |
+|---|---|---|
+| **HCS** | 顶层 `resource_config` + `pool_node_count` / `flavor` / `t_flops` | `resource_config.pool_id` / `pool_type` / `chip_type` / `flavor_id` |
+| **HC**  | `task_parameter.parameters` 中的 `train_flavor` 超参 | `value = {"flavor": "<规格>", "pool_id": "<pool-xxx>"}` |
+
+> HC 下 `pangu training model-detail` 返回的 `workflow_info.parameters` 里**已经包含一个 `train_flavor` 项**，但相较其他超参缺少 `default`。创建任务时只需为该项补 `value`（其他字段 description/type/required 保持不变）。资源池来源仍是 `pangu pool list`，与 HCS 一致。
+
+HC 示例：
+
+```yaml
+task_parameter:
+  parameters:
+    - name: train_flavor
+      value:
+        flavor: "1*ascend-snt9b"        # 取自 pangu training model-detail 的规格表
+        pool_id: "pool-xxxxxxxx"        # pangu pool list 取 pool_id
+    # ... 其他超参
+```
+
+在命令行可用 `--pool-id <pool-xxx> --train-flavor <规格>` 注入；CLI 会就地更新 `task_parameter.parameters` 中的 `train_flavor` 项（不存在时自动 append）。
+HCS 专有的 `--pool-type / --chip-type / --flavor-id / --nodes / --flavor / --t-flops` 在 HC 模式下被忽略并提示。
 
 **核心枚举**（按《训练任务管理 API》权威定义）：
 
@@ -334,7 +358,8 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 |---|---|
 | `--model-type` | `NLP` (NLP大模型) · `MM` (多模态) · `CV` · `Predict` (预测) · `AI4Science` (科学计算) |
 | `--train-type` | `SFT` (全量微调) · `PRETRAIN` (预训练) · `LORA` (lora) · `DPO` · `RFT` |
-| `--model-source` | `pangu` (预置) · `third` (三方) · `pangu-third` (盘古提供的三方) |
+| `--model-source` (create, 3.13.5) | `pangu` (盘古预置) · `third` (三方) · `pangu-third` (盘古预置三方模型) |
+| `--model-source` (model-detail / scaffold, 3.13.11) | `SYSTEM` (盘古发布的预置模型) · `USER` (训练任务产生的模型) — **与 create 不同套，严格区分** |
 | `--visibility` (publish) | `current` (当前空间) · `all` (全部空间) |
 | `--category` (publish) | `pangu` · `3rd` · `pangu-poc` · `pangu-iit` · `3rd-pangu` |
 | `--action-type` (models) | `PRETRAIN` · `SFT` · `LORA` · `QUANTIZATION` · `DPO` |
@@ -346,13 +371,19 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 # 查看详情
 pangu training get <task_id>
 
-# 推荐流程：先用 scaffold 生成 YAML 模板（内部自动调 model-detail 拉 task_parameter）
+# 推荐流程：先用 scaffold 生成 YAML 模板（内部自动调 3.13.11 model-detail 拉 task_parameter）
+# 注意：scaffold/model-detail (3.13.11) 的 --model-source 取值是 SYSTEM | USER
+#       create (3.13.5) 的 model_source 取值是 pangu | third | pangu-third
+#       两套取值严格区分，不能混用
+# scaffold 写入 YAML 时按 SYSTEM→pangu / USER→third 自动映射；如属于"盘古预置三方模型"显式 --create-model-source pangu-third
 pangu training scaffold \
-  --model-id <model_id> --model-type NLP --train-type SFT --model-source pangu \
+  --model-id <model_id> --model-type NLP --train-type SFT --model-source SYSTEM \
   --asset-id <asset_id> \
   --out train.yaml
 
-# 编辑 train.yaml 里的 TODO 字段（task_name / pool_id / chip_type / flavor_id / t_flops 或给齐 nodes+flavor+flavor_id 自动推导）
+# 编辑 train.yaml 里的 TODO 字段：
+#   HCS：task_name / resource_config.pool_id / chip_type / flavor_id / t_flops（或给齐 nodes+flavor+flavor_id 自动推导）
+#   HC ：task_name / task_parameter.parameters[train_flavor].value.{flavor,pool_id}
 
 # 预检请求体（不会发送，skill 调试首选）
 pangu training create -f train.yaml --dry-run
@@ -361,11 +392,13 @@ pangu training create -f train.yaml --dry-run
 pangu training create -f train.yaml
 
 # 也可直接用 model-detail 看原始返回（含 chip_type 可选值、parameters 约束等）
+# 这里 --model-source 用 SYSTEM | USER（盘古预置 / 用户训练产物）
 pangu training model-detail \
-  --model-id <model_id> --model-type NLP --train-type SFT --model-source pangu
+  --model-id <model_id> --model-type NLP --train-type SFT --model-source SYSTEM
 
-# 命令行覆盖 YAML（必填: task_name / asset_id / model_type / train_type / model_source / t_flops / task_parameter）
+# 命令行覆盖 YAML（HCS 必填: task_name / asset_id / model_type / train_type / model_source / t_flops / task_parameter）
 # 同时给齐 --nodes / --flavor-id / --flavor 时 t_flops 会自动推导为 nodes × flavor_id × flavor
+# [HCS] 资源池走顶层 resource_config
 pangu training create -f train.yaml \
   --name my-finetune \
   --asset-id <asset_id> \
@@ -376,6 +409,15 @@ pangu training create -f train.yaml \
   --pool-id <pool_id> --pool-type private --chip-type Snt9B3 \
   --flavor-id 8 --nodes 1 --flavor 313 \
   --plog-level 0
+
+# [HC] 资源池作为 train_flavor 超参注入 task_parameter.parameters
+# 必填校验：task_parameter.parameters 中必须有 train_flavor 且 pool_id 非空（不需要 t_flops）
+pangu training create -f train.yaml \
+  --name my-finetune \
+  --asset-id <asset_id> --model-id <model_id> \
+  --model-type NLP --train-type SFT --model-source pangu \
+  --dataset-id <ds_id> --dataset-name ds-train --dataset-version-id v1 \
+  --pool-id <pool_id> --train-flavor "1*ascend-snt9b"
 
 # 量化训练
 pangu training create -f quant.yaml --quantization-type QUANTIZATION-W8A8C --output-artifact-name my-quant

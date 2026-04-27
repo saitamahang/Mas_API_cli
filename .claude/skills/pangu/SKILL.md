@@ -128,15 +128,35 @@ pangu training scaffold \
   --train-type SFT \
   --model-source SYSTEM \
   --out train.yaml
+# ⚠️ scaffold 的 --model-source 是 3.13.11 model-detail 接口的取值：SYSTEM (盘古预置) | USER (训练产物)
+# 而 3.13.5 create 接口的 model_source 是另一套：pangu | third | pangu-third (盘古预置三方)
+# 严格按各自接口的取值范围使用，不能混用
+# scaffold 写入 YAML 时按 SYSTEM→pangu / USER→third 自动映射；如属于盘古预置三方模型加 --create-model-source pangu-third
 # 内部会调 model-detail，把 workflow_info.parameters 填到 task_parameter
-# 然后人工/agent 编辑 train.yaml 的 TODO 占位符（task_name / pool_id / chip_type / flavor_id 等）
+# scaffold 会按 env_type 生成不同骨架：
+#   HCS：顶层 resource_config + pool_node_count / flavor / t_flops
+#   HC ：把 train_flavor 注入 task_parameter.parameters[name=train_flavor].value = {flavor, pool_id}
+# 然后人工/agent 编辑 train.yaml 的 TODO 占位符（task_name / pool_id / chip_type/flavor_id 或 train_flavor 等）
 ```
 > 不想写文件就去掉 `--out`，直接打印到 stdout 由 agent 接管。
+
+#### 资源池注入方式（必读，HCS / HC 不同）
+
+| env_type | 写入位置 | CLI 参数 |
+|---|---|---|
+| HCS | 顶层 `resource_config` + `pool_node_count` / `flavor` / `t_flops` | `--pool-id --pool-type --chip-type --flavor-id --nodes --flavor [--t-flops]` |
+| HC  | `task_parameter.parameters` 中的 `train_flavor` 超参（`value = {flavor, pool_id}`） | `--pool-id --train-flavor "<规格>"` |
+
+HC 模式下 `--pool-type / --chip-type / --flavor-id / --nodes / --flavor / --t-flops` 全部不生效（CLI 会忽略并给出警告）。`--train-flavor` 取自 `pangu training model-detail` 返回的规格表，例 `1*ascend-snt9b`。
+
+> **重要**：HC 下 `model-detail` 的 `workflow_info.parameters` 里**已经有 `train_flavor` 项**，只是相较其他超参缺 `default`。CLI 在 inject 时会保留原项的 description/type/required 等字段，仅补/覆盖 `value = {flavor, pool_id}`。pool_id 仍由 `pangu pool list` 获取，和 HCS 一样。
 
 ### 3.3 dry-run 校验
 ```bash
 pangu training create -f train.yaml --dry-run
-# 输出最终请求体 YAML，含必填校验、t_flops 自动推导（nodes × flavor_id × flavor）
+# 输出最终请求体 YAML，含必填校验
+#   HCS：t_flops 自动推导（nodes × flavor_id × flavor）
+#   HC ：校验 task_parameter.parameters 中存在 train_flavor 且 pool_id 非空
 # 不会真的调 API
 ```
 
@@ -163,9 +183,10 @@ pangu training stop <task_id>
 | `task_name` | 自取，如 `cv-flower-cls-sft-v1` |
 | `model_type` | CV（本示例）/ NLP / MM / Predict / AI4Science |
 | `train_type` | SFT / PRETRAIN / LORA / DPO / RFT |
-| `model_source` | SYSTEM（用预置）或 USER（用自训产物） |
-| `t_flops` | 可省，CLI 会按 `nodes × flavor_id × flavor` 自动推导 |
-| `task_parameter` | 由 scaffold 从 `model-detail.workflow_info.parameters` 填好 |
+| `model_source` | **两套不同枚举，严格区分**：`scaffold` / `model-detail` (3.13.11) 用 `SYSTEM` (盘古预置) / `USER` (训练产物)；`create` (3.13.5) 写入 YAML 的是 `pangu` / `third` / `pangu-third` (盘古预置三方)。scaffold 自动映射 SYSTEM→pangu / USER→third；如属于盘古预置三方模型显式 `--create-model-source pangu-third` |
+| `t_flops` | **[HCS 必填]** 可省，CLI 按 `nodes × flavor_id × flavor` 自动推导。**HC 不需要此字段** |
+| 资源池 | HCS：`resource_config.{pool_id,pool_type,chip_type,flavor_id}`；HC：`task_parameter.parameters[train_flavor].value.{flavor,pool_id}` |
+| `task_parameter` | 由 scaffold 从 `model-detail.workflow_info.parameters` 填好（HC 下还会注入 `train_flavor` 占位） |
 
 ### 3.7 训练完成后发布为模型资产
 ```bash

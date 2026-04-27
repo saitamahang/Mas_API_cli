@@ -52,7 +52,9 @@ RUNNING_PATH    = BASE + "/tasks"
 # 复用给多个命令的长字符串，避免散落各处改一处漏一处。
 HELP_MODEL_TYPE  = "模型类型: NLP (NLP大模型) | MM (多模态模型) | CV (CV模型) | Predict (预测模型) | AI4Science (科学计算模型)"
 HELP_TRAIN_TYPE  = "训练类型: SFT (全量微调) | PRETRAIN (预训练) | LORA (lora微调) | DPO (DPO强化学习) | RFT (RFT强化学习)"
-HELP_MODEL_SRC   = "模型来源: pangu (盘古预置模型) | third (三方模型) | pangu-third (盘古预置三方模型)"
+HELP_MODEL_SRC          = "模型来源 [3.13.5 create 接口]: pangu (盘古预置模型) | third (三方模型) | pangu-third (盘古预置三方模型)"
+# 注意：3.13.11 获取模型详情 / scaffold 用的是 SYSTEM|USER，与 create 接口的 model_source 不是同一套取值，不能混用
+HELP_MODEL_SRC_DETAIL   = "模型来源 [3.13.11 model-detail / scaffold 接口]: SYSTEM (盘古发布的预置模型) | USER (训练任务产生的模型)"
 HELP_ACTION_TYPE = "操作类型: PRETRAIN (预训练) | SFT (全量微调) | LORA (lora微调) | QUANTIZATION (量化) | DPO (DPO强化学习)"
 HELP_VISIBILITY  = "可见性: current (仅当前空间) | all (全部空间)"
 HELP_CATEGORY    = ("模型资产来源: pangu (盘古大模型) | 3rd (用户导入的三方大模型) | "
@@ -103,6 +105,31 @@ def _load_yaml(config_file: str) -> dict:
         raise typer.Exit(1)
     with p.open(encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _inject_train_flavor(parameters: list, flavor: str, pool_id: str) -> list:
+    """[HC] 把资源池注入到 task_parameter.parameters 的 train_flavor 超参中。
+
+    HC 环境下资源池不走顶层 resource_config，而是作为 train_flavor 超参：
+        {"name": "train_flavor", "value": {"flavor": "<规格>", "pool_id": "<pool-xxx>"}}
+
+    - 若 model-detail 已返回 train_flavor 占位项，则就地更新 value
+    - 否则 append 一项
+    """
+    new_value = {"flavor": flavor, "pool_id": pool_id}
+    found = False
+    out = []
+    for p in parameters or []:
+        if isinstance(p, dict) and p.get("name") == "train_flavor":
+            np = dict(p)
+            np["value"] = new_value
+            out.append(np)
+            found = True
+        else:
+            out.append(p)
+    if not found:
+        out.append({"name": "train_flavor", "value": new_value})
+    return out
 
 
 def _extract_first_job_id(detail: dict) -> str:
@@ -201,7 +228,8 @@ def scaffold(
     model_id: str = typer.Option(..., "--model-id", help="模型 ID，预置模型时 = asset_id"),
     model_type: str = typer.Option(..., "--model-type", help="(必填) " + HELP_MODEL_TYPE),
     train_type: str = typer.Option(..., "--train-type", help="(必填) " + HELP_TRAIN_TYPE),
-    model_source: str = typer.Option(..., "--model-source", help="(必填) " + HELP_MODEL_SRC),
+    model_source: str = typer.Option(..., "--model-source", help="(必填) " + HELP_MODEL_SRC_DETAIL),
+    create_model_source: Optional[str] = typer.Option(None, "--create-model-source", help="写入 YAML 的 create 接口 model_source [可选] " + HELP_MODEL_SRC + "；不传则按 SYSTEM→pangu / USER→third 自动映射"),
     strategy: Optional[str] = typer.Option(None, "--strategy", help="策略 (可选)"),
     asset_id: Optional[str] = typer.Option(None, "--asset-id", help="已知的 asset_id，直接填入模板；不传则留 TODO 占位"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
@@ -225,27 +253,65 @@ def scaffold(
     detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
     parameters = (detail.get("workflow_info") or {}).get("parameters") or []
 
-    skeleton = {
-        "task_name":       "TODO-请填写任务名称",
-        "asset_id":        asset_id or "TODO-pangu model list 获取 asset_id",
-        "model_id":        model_id,
-        "model_type":      model_type,
-        "train_type":      train_type,
-        "model_source":    model_source,
-        "train_task_desc": "",
-        "pool_node_count": 1,
-        "flavor":          313,
-        "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
-        "resource_config": {
-            "pool_id":   "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)",
-            "pool_type": "private",
-            "chip_type": "TODO-如 Snt9B3 / Snt9B4",
-            "flavor_id": "TODO-专属池取 1|2|4|8",
-        },
-        "task_parameter": {
-            "parameters": parameters,
-        },
-    }
+    # YAML 中 model_source 是给 3.13.5 create 用的（pangu|third|pangu-third），
+    # 与上面 model-detail 调用使用的 SYSTEM|USER 不是同一套取值，必须分开
+    # 与刚刚 model-detail 用的 SYSTEM|USER 不是同一套取值。
+    if create_model_source:
+        body_model_source = create_model_source
+    elif model_source.upper() == "SYSTEM":
+        body_model_source = "pangu"
+    elif model_source.upper() == "USER":
+        body_model_source = "third"  # 用户自训产出的模型走 third；如属于盘古预置三方模型请显式 --create-model-source pangu-third
+    else:
+        body_model_source = model_source  # 兜底：用户传了非标值也透传
+
+    env_type = (client.config.env_type or "HCS").upper()
+
+    if env_type == "HC":
+        # HC：model-detail 返回的 train_flavor 项相比其他超参少一个 default，
+        # 需要在创建任务时补上 value = {flavor, pool_id}（资源池来源同 HCS：pangu pool list）。
+        # 这里只填 value，原 train_flavor 项的 description/type/required 等兄弟字段保持不变。
+        parameters = _inject_train_flavor(
+            parameters,
+            flavor="TODO-flavor 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）",
+            pool_id="TODO-pangu pool list 获取 pool-xxxxx",
+        )
+        skeleton = {
+            "task_name":       "TODO-请填写任务名称",
+            "asset_id":        asset_id or "TODO-pangu model list 获取 asset_id",
+            "model_id":        model_id,
+            "model_type":      model_type,
+            "train_type":      train_type,
+            "model_source":    body_model_source,
+            "train_task_desc": "",
+            # HC 不需要顶层 pool_node_count / flavor / t_flops / resource_config
+            "task_parameter": {
+                "parameters": parameters,
+            },
+        }
+    else:
+        # HCS：资源池走顶层 resource_config
+        skeleton = {
+            "task_name":       "TODO-请填写任务名称",
+            "asset_id":        asset_id or "TODO-pangu model list 获取 asset_id",
+            "model_id":        model_id,
+            "model_type":      model_type,
+            "train_type":      train_type,
+            "model_source":    body_model_source,
+            "train_task_desc": "",
+            "pool_node_count": 1,
+            "flavor":          313,
+            "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
+            "resource_config": {
+                "pool_id":   "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)",
+                "pool_type": "private",
+                "chip_type": "TODO-如 Snt9B3 / Snt9B4",
+                "flavor_id": "TODO-专属池取 1|2|4|8",
+            },
+            "task_parameter": {
+                "parameters": parameters,
+            },
+        }
 
     text = yaml.safe_dump(skeleton, allow_unicode=True, sort_keys=False)
     if out_file:
@@ -283,14 +349,15 @@ def create_task(
     dataset_split_ratio: Optional[int] = typer.Option(None, "--dataset-split-ratio", help="训练/验证数据集分割比率，取值 1~50 (整体范围 0-100)"),
     # 断点续训
     checkpoint_id: Optional[str] = typer.Option(None, "--checkpoint-id", help="断点续训场景的恢复点 UUID (取自查询断点接口)"),
-    # 资源
-    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID (公共池为空，专属池必填)"),
-    pool_type: Optional[str] = typer.Option(None, "--pool-type", help="资源池类型: public (公共池) | private (专属池，默认)"),
-    chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，取自 model-detail 接口的 chip_type，如 Snt9B3 / Snt9B4"),
-    flavor_id: Optional[str] = typer.Option(None, "--flavor-id", help="规格卡数，专属池取 1 | 2 | 4 | 8"),
-    nodes: Optional[int] = typer.Option(None, "--nodes", help="资源池节点数 pool_node_count，默认 1；flavor_id=8 时 >1 即多机多卡 (0-10000)"),
-    flavor: Optional[int] = typer.Option(None, "--flavor", help="资源池算力规格，常见 313 | 280 (0-10000)"),
-    t_flops: Optional[int] = typer.Option(None, "--t-flops", help="(必填) 总算力 = 卡数 × flavor；不传且同时传了 --nodes / --flavor-id / --flavor 时自动按 nodes × flavor_id × flavor 推导"),
+    # 资源（HCS 走顶层 resource_config；HC 作为 train_flavor 超参注入 task_parameter）
+    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID — HCS: 写入 resource_config.pool_id (公共池为空，专属池必填)；HC: 写入 task_parameter 中的 train_flavor.value.pool_id (必填)"),
+    pool_type: Optional[str] = typer.Option(None, "--pool-type", help="[HCS] 资源池类型: public (公共池) | private (专属池，默认)"),
+    chip_type: Optional[str] = typer.Option(None, "--chip-type", help="[HCS] 资源规格类型，取自 model-detail 接口的 chip_type，如 Snt9B3 / Snt9B4"),
+    flavor_id: Optional[str] = typer.Option(None, "--flavor-id", help="[HCS] 规格卡数，专属池取 1 | 2 | 4 | 8"),
+    nodes: Optional[int] = typer.Option(None, "--nodes", help="[HCS] 资源池节点数 pool_node_count，默认 1；flavor_id=8 时 >1 即多机多卡 (0-10000)"),
+    flavor: Optional[int] = typer.Option(None, "--flavor", help="[HCS] 资源池算力规格，常见 313 | 280 (0-10000)"),
+    t_flops: Optional[int] = typer.Option(None, "--t-flops", help="[HCS 必填] 总算力 = 卡数 × flavor；不传且同时传了 --nodes / --flavor-id / --flavor 时自动按 nodes × flavor_id × flavor 推导"),
+    train_flavor: Optional[str] = typer.Option(None, "--train-flavor", help="[HC] 训练规格 flavor 字符串，写入 task_parameter 中的 train_flavor.value.flavor；取自 model-detail 返回的规格表，例 1*ascend-snt9b"),
     # 其他
     plog_level: Optional[int] = typer.Option(None, "--plog-level", help=HELP_PLOG_LEVEL + " (默认 -1)"),
     is_input_finished: Optional[int] = typer.Option(None, "--is-input-finished", help="训练参数是否已全部输入 (默认 1)"),
@@ -303,7 +370,15 @@ def create_task(
 
     task_parameter 字段结构复杂（见 model-detail 接口的 workflow_info.parameters），
     建议将完整请求体写入 YAML 后通过 --config 传入，CLI 参数用于覆盖/补齐常用字段。
+
+    资源池设置随 env_type 不同：
+      - HCS：顶层 resource_config + pool_node_count / flavor / t_flops
+      - HC ：作为 train_flavor 超参写入 task_parameter.parameters，
+             value = {"flavor": "<规格>", "pool_id": "<pool-xxx>"}
     """
+    client = PanguClient()
+    env_type = (client.config.env_type or "HCS").upper()
+
     body: dict = _load_yaml(config) if config else {}
 
     # 命令行覆盖 YAML
@@ -331,29 +406,56 @@ def create_task(
     if plog_level is not None:   body["plog_level"]            = plog_level
     if is_input_finished is not None: body["is_input_finished"] = is_input_finished
 
-    # resource_config 子对象单独合并
-    if any(v is not None for v in (pool_id, pool_type, chip_type, flavor_id)):
-        rc = body.setdefault("resource_config", {})
-        if pool_id:   rc["pool_id"]   = pool_id
-        if pool_type: rc["pool_type"] = pool_type
-        if chip_type: rc["chip_type"] = chip_type
-        if flavor_id: rc["flavor_id"] = flavor_id
+    if env_type == "HC":
+        # HC：把 --pool-id / --train-flavor 注入 task_parameter.parameters 的 train_flavor 项
+        if pool_id or train_flavor:
+            tp = body.setdefault("task_parameter", {})
+            params = tp.get("parameters") or []
+            # 取已有 train_flavor.value 作为基底，命令行只覆盖给出的字段
+            existing = {}
+            for p in params:
+                if isinstance(p, dict) and p.get("name") == "train_flavor":
+                    existing = dict(p.get("value") or {})
+                    break
+            if train_flavor: existing["flavor"]  = train_flavor
+            if pool_id:      existing["pool_id"] = pool_id
+            tp["parameters"] = _inject_train_flavor(
+                params,
+                flavor=existing.get("flavor", ""),
+                pool_id=existing.get("pool_id", ""),
+            )
+        # HC 不应出现 HCS 专有的顶层资源字段，给出明确提示而不是默默丢弃
+        for hcs_only in ("resource_config", "pool_node_count", "flavor", "t_flops"):
+            if hcs_only in body:
+                console.print(f"[yellow]env_type=HC：忽略 HCS 专有字段 {hcs_only}（HC 走 task_parameter.train_flavor）[/yellow]")
+                body.pop(hcs_only, None)
+    else:
+        # HCS：resource_config 子对象单独合并
+        if any(v is not None for v in (pool_id, pool_type, chip_type, flavor_id)):
+            rc = body.setdefault("resource_config", {})
+            if pool_id:   rc["pool_id"]   = pool_id
+            if pool_type: rc["pool_type"] = pool_type
+            if chip_type: rc["chip_type"] = chip_type
+            if flavor_id: rc["flavor_id"] = flavor_id
 
-    # t_flops 自动推导：用户没传 t_flops 但给齐了 nodes / flavor_id / flavor 时，按 PDF 公式（卡数 × flavor）推导
-    if body.get("t_flops") in (None, 0):
-        rc_for_calc = body.get("resource_config") or {}
-        n  = body.get("pool_node_count")
-        fi = rc_for_calc.get("flavor_id")
-        fv = body.get("flavor")
-        try:
-            n, fi, fv = int(n), int(fi), int(fv)
-            body["t_flops"] = n * fi * fv
-            console.print(f"[cyan]自动推导 t_flops = nodes({n}) × flavor_id({fi}) × flavor({fv}) = {body['t_flops']}[/cyan]")
-        except (TypeError, ValueError):
-            pass  # 缺任一项就不推，留给下面必填校验报错
+        # t_flops 自动推导：用户没传 t_flops 但给齐了 nodes / flavor_id / flavor 时，按 PDF 公式（卡数 × flavor）推导
+        if body.get("t_flops") in (None, 0):
+            rc_for_calc = body.get("resource_config") or {}
+            n  = body.get("pool_node_count")
+            fi = rc_for_calc.get("flavor_id")
+            fv = body.get("flavor")
+            try:
+                n, fi, fv = int(n), int(fi), int(fv)
+                body["t_flops"] = n * fi * fv
+                console.print(f"[cyan]自动推导 t_flops = nodes({n}) × flavor_id({fi}) × flavor({fv}) = {body['t_flops']}[/cyan]")
+            except (TypeError, ValueError):
+                pass  # 缺任一项就不推，留给下面必填校验报错
 
-    # PDF 明确必填：asset_id / task_name / model_type / train_type / model_source / t_flops / task_parameter
-    for req in ("asset_id", "task_name", "model_type", "train_type", "model_source", "t_flops", "task_parameter"):
+    # 必填校验：HCS 多 t_flops；HC 不需要 t_flops（资源走 task_parameter）
+    required = ["asset_id", "task_name", "model_type", "train_type", "model_source", "task_parameter"]
+    if env_type != "HC":
+        required.append("t_flops")
+    for req in required:
         if body.get(req) in (None, "", {}, []):
             console.print(f"[red]缺少必填字段: {req}[/red]")
             if req == "task_parameter":
@@ -362,12 +464,20 @@ def create_task(
                 console.print("[yellow]未传 --t-flops 且 --nodes / --flavor-id / --flavor 未同时给齐，无法自动推导[/yellow]")
             raise typer.Exit(1)
 
+    # HC 额外校验：task_parameter 内必须有 train_flavor 且 pool_id 非空
+    if env_type == "HC":
+        params = (body.get("task_parameter") or {}).get("parameters") or []
+        tf = next((p for p in params if isinstance(p, dict) and p.get("name") == "train_flavor"), None)
+        if not tf or not (tf.get("value") or {}).get("pool_id"):
+            console.print("[red]env_type=HC：task_parameter.parameters 中缺少 train_flavor 或其 pool_id 为空[/red]")
+            console.print("[yellow]通过 --pool-id [+ --train-flavor] 注入，或在 YAML 中直接补齐[/yellow]")
+            raise typer.Exit(1)
+
     if dry_run:
         console.print("[cyan]--dry-run：以下为将提交的请求体（未发送到 API）[/cyan]")
         typer.echo(yaml.safe_dump(body, allow_unicode=True, sort_keys=False))
         return
 
-    client = PanguClient()
     data = client.post(CREATE_PATH, workspace_id=workspace, json=body)
     task_id = data.get("task_id", "")
 
@@ -754,7 +864,7 @@ def model_detail(
     model_id: str = typer.Option(..., "--model-id", help="模型 ID (必填)"),
     model_type: str = typer.Option(..., "--model-type", help="(必填) " + HELP_MODEL_TYPE),
     train_type: str = typer.Option(..., "--train-type", help="(必填) " + HELP_TRAIN_TYPE),
-    model_source: str = typer.Option(..., "--model-source", help="(必填) " + HELP_MODEL_SRC),
+    model_source: str = typer.Option(..., "--model-source", help="(必填) " + HELP_MODEL_SRC_DETAIL),
     strategy: Optional[str] = typer.Option(None, "--strategy", help="策略 (可选)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),

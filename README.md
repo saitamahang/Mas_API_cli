@@ -230,10 +230,13 @@ pangu model list --feature 7B                     # NLP 存储参数量 / 科学
 pangu model list --user-id <uid> --no-op-user     # 按发布用户过滤（is_op_user=0 必搭配）
 pangu model list --workspace-source others        # 来自其他空间 (current|others)
 
-# 3.12.2 查询资产详情
+# 3.12.2 查询资产详情（返回资产元数据：asset_name / model_type / actions 等）
 pangu model get <asset_id>
 pangu model get <asset_id> --all-actions                     # 展示模型支持的全部 actions
 pangu model get <asset_id> --action-asset-tag NLP-N1-PERTRAIN
+# ⚠️ 注意：model get 返回的是资产元数据，不能用于构造训练请求体。
+#    如需获取训练参数模板（含 workflow_info / parameters），请用：
+#    pangu training model-detail --model-id <model_id> --model-type <type> --train-type <type> --model-source SYSTEM
 
 # 3.12.3 获取完整模型列表（含 can_deploy/can_train/can_eval/is_used 等能力标识）
 #   CLI 已把嵌套的 modelAsset.* 展平到顶层，方便表格展示

@@ -192,7 +192,12 @@ def get_model(
     all_actions: bool = typer.Option(False, "--all-actions", help="展示模型支持的全部 actions（默认按需展示）"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式 table|json|yaml"),
 ):
-    """查询模型资产详情 (3.12.2)"""
+    """查询模型资产详情 (3.12.2)
+
+    返回资产元数据（asset_name / model_type / actions 等）。
+    ⚠️ 如需获取训练参数模板（含 workflow_info / parameters），请用
+       `pangu training model-detail`（3.13.11），本命令不能用于构造训练请求体。
+    """
     client = PanguClient()
     params: dict = {}
     if action_asset_tag: params["action_asset_tag"] = action_asset_tag

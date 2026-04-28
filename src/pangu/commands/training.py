@@ -984,7 +984,12 @@ def model_detail(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """获取模型详情 (3.13.11)，返回体含 workflow_info.parameters 可用于构造 task_parameter"""
+    """获取训练参数模板 (3.13.11 model-detail)
+
+    返回 workflow_info（含 parameters / storages / data_requirements / assets / steps / policy 等），
+    用于构造 `pangu training create` 的 `task_parameter` 字段。
+    ⚠️ 这是训练场景专用接口，与 `pangu model get`（3.12.2 资产元数据查询）完全不同，严禁混用。
+    """
     client = PanguClient()
     body = {
         "model_id":     model_id,

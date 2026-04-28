@@ -151,6 +151,27 @@ HC 模式下 `--pool-type / --chip-type / --flavor-id / --nodes / --flavor / --t
 
 > **重要**：HC 下 `model-detail` 的 `workflow_info.parameters` 里**已经有 `train_flavor` 项**，只是相较其他超参缺 `default`。CLI 在 inject 时会保留原项的 description/type/required 等字段，仅补/覆盖 `value = {flavor, pool_id}`。pool_id 仍由 `pangu pool list` 获取，和 HCS 一样。
 
+> **参数定义 → 运行时值的转换**：`model-detail` 返回的 `workflow_info.parameters` 是参数*定义*（含 `default / constraint / enum / type` 等元信息），但 3.13.5 创建请求体里每条参数还要带 `value` 字段（PDF §3.13.5 请求示例显示 `default` 与 `value` 同时存在，`value` 通常 = `default`）。`scaffold` 已自动转换：
+> - `format == "train_flavor"` → `value = {"flavor_id": "TODO", "pool_id": "TODO"}`（HC 后续由 `--pool-id/--train-flavor` 覆盖）
+> - `format ∈ {"nfs","pfs"}` → 不写 `value`（多为可选挂载/监控目录，按需自填）
+> - 有 `default` → `value = default`
+> - 其余 → `value = "TODO-请按描述填值"`
+>
+> 同时 `task_parameter` 还包含 `storages` / `data_requirements` 两个键（来自 `workflow_info`），scaffold 已一并写入。
+
+#### scaffold 已覆盖的可选字段（PDF §3.13.5 全集）
+模板会列出全部顶层可选字段（不需要的请删除/留空）：
+- 数据集：`dataset_*` / `eval_*` / `dataset_split_ratio`
+- 断点续训：`checkpoint_id` / `checkpoint_config{save_checkpoints_max, skipped_steps, restore_training, checkpoint_publish_info}`
+- SFS Turbo（HCS）：`sfs_config{model_sfs_enable, dataset_sfs_enable, dataset_preload}`
+- 量化：`output_artifact_name` / `quantization_type`
+- RLHF：`reward_model_id`（接口当前注明"不支持"，占位）
+- 三方模型环境变量：`task_env`（model_source=third/pangu-third 用）
+- 日志：`plog_level` / `is_input_finished`
+- 资源（HCS）：`resource_config{pool_type, chip_type, pool_id, pool_name, flavor_id, flavor_name, node_count, fp16, t_flops, training_unit}`
+- 训练参数：`task_parameter{parameters[每条带 value], storages, data_requirements}`
+> `create` 提交前会递归剔除 `null` 字段（scaffold 留下未填的 `None` 占位不会发到 API），但保留空字符串 / 空对象 / 空数组。
+
 ### 3.3 dry-run 校验
 ```bash
 pangu training create -f train.yaml --dry-run
@@ -186,7 +207,7 @@ pangu training stop <task_id>
 | `model_source` | **两套不同枚举，严格区分**：`scaffold` / `model-detail` (3.13.11) 用 `SYSTEM` (盘古预置) / `USER` (训练产物)；`create` (3.13.5) 写入 YAML 的是 `pangu` / `third` / `pangu-third` (盘古预置三方)。scaffold 自动映射 SYSTEM→pangu / USER→third；如属于盘古预置三方模型显式 `--create-model-source pangu-third` |
 | `t_flops` | **[HCS 必填]** 可省，CLI 按 `nodes × flavor_id × flavor` 自动推导。**HC 不需要此字段** |
 | 资源池 | HCS：`resource_config.{pool_id,pool_type,chip_type,flavor_id}`；HC：`task_parameter.parameters[train_flavor].value.{flavor,pool_id}` |
-| `task_parameter` | 由 scaffold 从 `model-detail.workflow_info.parameters` 填好（HC 下还会注入 `train_flavor` 占位） |
+| `task_parameter` | 由 scaffold 从 `model-detail.workflow_info` 完整填好（含 `parameters`+`storages`+`data_requirements`，每条 parameter 自动补 `value`；HC 下还会注入 `train_flavor` 占位） |
 
 ### 3.7 训练完成后发布为模型资产
 ```bash

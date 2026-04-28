@@ -107,20 +107,20 @@ def _load_yaml(config_file: str) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _inject_train_flavor(parameters: list, flavor: str, pool_id: str) -> list:
+def _inject_train_flavor(parameters: list, flavor_id: str, pool_id: str) -> list:
     """[HC] 把资源池注入到 task_parameter.parameters 的 train_flavor 超参中。
 
     HC 环境下资源池不走顶层 resource_config，而是作为 train_flavor 超参：
-        {"name": "train_flavor", "value": {"flavor": "<规格>", "pool_id": "<pool-xxx>"}}
+        {"name": "train_flavor", "value": {"flavor_id": "<规格>", "pool_id": "<pool-xxx>"}}
 
-    - 若 model-detail 已返回 train_flavor 占位项，则就地更新 value
+    - 若 model-detail 已返回 train_flavor 占位项（按 name 或 format=train_flavor 匹配），则就地更新 value
     - 否则 append 一项
     """
-    new_value = {"flavor": flavor, "pool_id": pool_id}
+    new_value = {"flavor_id": flavor_id, "pool_id": pool_id}
     found = False
     out = []
     for p in parameters or []:
-        if isinstance(p, dict) and p.get("name") == "train_flavor":
+        if isinstance(p, dict) and (p.get("name") == "train_flavor" or p.get("format") == "train_flavor"):
             np = dict(p)
             np["value"] = new_value
             out.append(np)
@@ -130,6 +130,56 @@ def _inject_train_flavor(parameters: list, flavor: str, pool_id: str) -> list:
     if not found:
         out.append({"name": "train_flavor", "value": new_value})
     return out
+
+
+def _paramdef_to_runtime(param: dict) -> dict:
+    """把 model-detail 返回的"参数定义"转成 create 请求体所需的"运行时参数"。
+
+    workflow_info.parameters 里每一项是参数 *定义*（含 default/constraint/enum 等元信息），
+    而 3.13.5 创建训练任务请求体的 task_parameter.parameters 里每一项需要带上一个 `value` 字段
+    （PDF §3.13.5 请求示例每条参数都同时包含 default 与 value）。
+
+    转换规则（保留所有兄弟字段，只补 value）：
+      - format == "train_flavor" → value = {"flavor_id": "TODO-...", "pool_id": "TODO-..."}
+        (HC/HCS 都需要的资源池占位；HC 后续由 _inject_train_flavor 覆盖；HCS 也可走顶层 resource_config)
+      - format in ("nfs", "pfs")  → 不写 value（占位/可选；用户按需在 YAML 中补 value）
+      - 已有 default               → value = default（与 PDF 示例一致：value 通常等于 default）
+      - 既无 default 又无特殊 format → value = "TODO-请按 description/constraint 填值"
+    """
+    if not isinstance(param, dict):
+        return param
+    out = dict(param)
+    if "value" in out:
+        return out  # 已有 value 不动，避免覆盖用户/上游已设置的值
+    fmt = out.get("format")
+    if fmt == "train_flavor":
+        out["value"] = {
+            "flavor_id": "TODO-参考 model-detail 中 train_flavor 的取值范围，例 1*ascend-snt9b",
+            "pool_id":   "TODO-pangu pool list 获取 pool-xxxxx",
+        }
+    elif fmt in ("nfs", "pfs"):
+        # nfs/pfs 类型多为可选挂载/监控目录；留给用户在 YAML 里按需补 value，避免误传空对象
+        pass
+    elif "default" in out:
+        out["value"] = out["default"]
+    else:
+        title = out.get("title") or out.get("name") or "?"
+        out["value"] = f"TODO-请按描述填值 ({title})"
+    return out
+
+
+def _build_task_parameter(workflow_info: dict) -> dict:
+    """从 model-detail 的 workflow_info 组装 create 请求体里的 task_parameter。
+
+    PDF §3.13.5 请求示例的 task_parameter 同时包含 parameters / storages / data_requirements
+    三个键，全部来源于 model-detail 的 workflow_info；CLI 应原样带过去而不是只取 parameters。
+    """
+    wi = workflow_info or {}
+    return {
+        "parameters":        [_paramdef_to_runtime(p) for p in (wi.get("parameters") or [])],
+        "storages":          wi.get("storages") or [],
+        "data_requirements": wi.get("data_requirements") or [],
+    }
 
 
 def _extract_first_job_id(detail: dict) -> str:
@@ -251,11 +301,14 @@ def scaffold(
         detail_body["strategy"] = strategy
 
     detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
-    parameters = (detail.get("workflow_info") or {}).get("parameters") or []
+    workflow_info = detail.get("workflow_info") or {}
+    # task_parameter 完整组装：parameters（每条补 value）+ storages + data_requirements
+    # —— 与 PDF §3.13.5 请求示例完全一致，避免只把 parameters 部分丢过去
+    task_parameter = _build_task_parameter(workflow_info)
+    parameters = task_parameter["parameters"]
 
     # YAML 中 model_source 是给 3.13.5 create 用的（pangu|third|pangu-third），
     # 与上面 model-detail 调用使用的 SYSTEM|USER 不是同一套取值，必须分开
-    # 与刚刚 model-detail 用的 SYSTEM|USER 不是同一套取值。
     if create_model_source:
         body_model_source = create_model_source
     elif model_source.upper() == "SYSTEM":
@@ -267,57 +320,103 @@ def scaffold(
 
     env_type = (client.config.env_type or "HCS").upper()
 
+    # 根据 model-detail 返回，先取若干字段做默认占位（避免 user 漏传）
+    suggested_asset_id = asset_id or detail.get("asset_id") or "TODO-pangu model list 获取 asset_id"
+
+    # 公共骨架：3.13.5 PDF 中所有顶层可选字段都列上 TODO，让用户清楚有哪些选项
+    common_top: dict = {
+        "task_name":              "TODO-请填写任务名称（中文/字母/数字/中划线/下划线，不以数字开头，≤64）",
+        "asset_id":               suggested_asset_id,
+        "model_id":               model_id,
+        "model_type":             model_type,
+        "train_type":             train_type,
+        "model_source":           body_model_source,
+        "model_name":             "",  # 可选，不填走默认
+        "train_task_desc":        "",
+        # 数据集（可选，按需填）
+        "dataset_id":             "",
+        "dataset_name":           "",
+        "dataset_version_id":     "",
+        "eval_dataset_id":        "",
+        "eval_dataset_name":      "",
+        "eval_dataset_version_id":"",
+        "dataset_split_ratio":    None,  # 1~50；不需要可删除
+        # 断点续训（可选）
+        "checkpoint_id":          "",
+        "checkpoint_config": {
+            # PDF §3.13.5 CheckpointConfig，需要时取消注释/补值；不需要保留 {} 即可
+            # "save_checkpoints_max":  0,   # >0 开启断点续训并保存指定数量；0 关闭，-1 无限
+            # "skipped_steps":         0,   # 续训时跳过的步数
+            # "restore_training":      0,   # 0 重训 / 1 续训
+            # "checkpoint_publish_info": {  # 断点发布
+            #     "checkpoint_id": "", "visibility": "current",
+            #     "asset_name": "", "description": "",
+            # },
+        },
+        # SFS Turbo 加速（可选，仅 HCS）
+        "sfs_config": {
+            "model_sfs_enable":   False,
+            "dataset_sfs_enable": False,
+            "dataset_preload":    False,
+        },
+        # 量化场景（可选）
+        "output_artifact_name":   "",
+        "quantization_type":      "",
+        # 强化学习 RLHF 场景（当前接口注明"不支持"，保留占位说明）
+        "reward_model_id":        "",
+        # 三方模型环境变量（可选，model_source=third/pangu-third 时使用）
+        "task_env":               {},
+        # 日志
+        "plog_level":             -1,
+        "is_input_finished":      1,
+        # 训练运行参数（含 storages / data_requirements / parameters[每条带 value]）
+        "task_parameter":         task_parameter,
+    }
+
     if env_type == "HC":
-        # HC：model-detail 返回的 train_flavor 项相比其他超参少一个 default，
-        # 需要在创建任务时补上 value = {flavor, pool_id}（资源池来源同 HCS：pangu pool list）。
-        # 这里只填 value，原 train_flavor 项的 description/type/required 等兄弟字段保持不变。
-        parameters = _inject_train_flavor(
+        # HC：资源池作为 train_flavor 超参注入 task_parameter.parameters
+        # 这里 _inject_train_flavor 会就地更新或追加 train_flavor 项；保留兄弟字段
+        common_top["task_parameter"]["parameters"] = _inject_train_flavor(
             parameters,
-            flavor="TODO-flavor 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）",
+            flavor_id="TODO-flavor_id 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）",
             pool_id="TODO-pangu pool list 获取 pool-xxxxx",
         )
-        skeleton = {
-            "task_name":       "TODO-请填写任务名称",
-            "asset_id":        asset_id or "TODO-pangu model list 获取 asset_id",
-            "model_id":        model_id,
-            "model_type":      model_type,
-            "train_type":      train_type,
-            "model_source":    body_model_source,
-            "train_task_desc": "",
-            # HC 不需要顶层 pool_node_count / flavor / t_flops / resource_config
-            "task_parameter": {
-                "parameters": parameters,
-            },
-        }
+        # HC 不使用顶层 pool_node_count / flavor / t_flops / resource_config
+        skeleton = common_top
     else:
-        # HCS：资源池走顶层 resource_config
-        skeleton = {
-            "task_name":       "TODO-请填写任务名称",
-            "asset_id":        asset_id or "TODO-pangu model list 获取 asset_id",
-            "model_id":        model_id,
-            "model_type":      model_type,
-            "train_type":      train_type,
-            "model_source":    body_model_source,
-            "train_task_desc": "",
+        # HCS：资源池走顶层 resource_config + pool_node_count / flavor / t_flops
+        common_top.update({
             "pool_node_count": 1,
             "flavor":          313,
             "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
+            # PDF §3.13.5 ResourceConfig 全字段；非必填项保留占位让用户按需取舍
             "resource_config": {
-                "pool_id":   "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)",
-                "pool_type": "private",
-                "chip_type": "TODO-如 Snt9B3 / Snt9B4",
-                "flavor_id": "TODO-专属池取 1|2|4|8",
+                "pool_type":       "private",                    # public | private（默认 private）
+                "chip_type":       "TODO-如 Snt9B3 / Snt9B4",
+                "pool_id":         "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)",
+                "pool_name":       "",
+                "flavor_id":       "TODO-专属池取 1|2|4|8",
+                "flavor_name":     "",
+                "node_count":      1,    # flavor_id=8 且 >1 即多机多卡
+                "fp16":            None, # 313 / 280 等
+                "t_flops":         None, # ResourceConfig 内的 t_flops（Double）
+                "training_unit":   None, # 训练单元
             },
-            "task_parameter": {
-                "parameters": parameters,
-            },
-        }
+        })
+        skeleton = common_top
 
     text = yaml.safe_dump(skeleton, allow_unicode=True, sort_keys=False)
     if out_file:
         Path(out_file).write_text(text, encoding="utf-8")
-        console.print(f"[green]已写入 {out_file}（含 {len(parameters)} 个训练参数）[/green]")
-        console.print("[cyan]下一步：编辑其中 TODO 项，然后 `pangu training create -f " + out_file + " --dry-run` 预览[/cyan]")
+        console.print(
+            f"[green]已写入 {out_file}（含 {len(parameters)} 个训练参数 / "
+            f"{len(task_parameter['storages'])} 个存储项 / "
+            f"{len(task_parameter['data_requirements'])} 个数据要求项）[/green]"
+        )
+        console.print(
+            "[cyan]下一步：编辑其中 TODO 项（必填字段标注在 PDF §3.13.5），"
+            f"然后 `pangu training create -f {out_file} --dry-run` 预览[/cyan]"
+        )
     else:
         typer.echo(text)
 
@@ -357,7 +456,7 @@ def create_task(
     nodes: Optional[int] = typer.Option(None, "--nodes", help="[HCS] 资源池节点数 pool_node_count，默认 1；flavor_id=8 时 >1 即多机多卡 (0-10000)"),
     flavor: Optional[int] = typer.Option(None, "--flavor", help="[HCS] 资源池算力规格，常见 313 | 280 (0-10000)"),
     t_flops: Optional[int] = typer.Option(None, "--t-flops", help="[HCS 必填] 总算力 = 卡数 × flavor；不传且同时传了 --nodes / --flavor-id / --flavor 时自动按 nodes × flavor_id × flavor 推导"),
-    train_flavor: Optional[str] = typer.Option(None, "--train-flavor", help="[HC] 训练规格 flavor 字符串，写入 task_parameter 中的 train_flavor.value.flavor；取自 model-detail 返回的规格表，例 1*ascend-snt9b"),
+    train_flavor: Optional[str] = typer.Option(None, "--train-flavor", help="[HC] 训练规格 flavor_id 字符串，写入 task_parameter 中的 train_flavor.value.flavor_id；取自 model-detail 返回的规格表，例 1*ascend-snt9b"),
     # 其他
     plog_level: Optional[int] = typer.Option(None, "--plog-level", help=HELP_PLOG_LEVEL + " (默认 -1)"),
     is_input_finished: Optional[int] = typer.Option(None, "--is-input-finished", help="训练参数是否已全部输入 (默认 1)"),
@@ -374,7 +473,7 @@ def create_task(
     资源池设置随 env_type 不同：
       - HCS：顶层 resource_config + pool_node_count / flavor / t_flops
       - HC ：作为 train_flavor 超参写入 task_parameter.parameters，
-             value = {"flavor": "<规格>", "pool_id": "<pool-xxx>"}
+             value = {"flavor_id": "<规格>", "pool_id": "<pool-xxx>"}
     """
     client = PanguClient()
     env_type = (client.config.env_type or "HCS").upper()
@@ -417,11 +516,11 @@ def create_task(
                 if isinstance(p, dict) and p.get("name") == "train_flavor":
                     existing = dict(p.get("value") or {})
                     break
-            if train_flavor: existing["flavor"]  = train_flavor
+            if train_flavor: existing["flavor_id"]  = train_flavor
             if pool_id:      existing["pool_id"] = pool_id
             tp["parameters"] = _inject_train_flavor(
                 params,
-                flavor=existing.get("flavor", ""),
+                flavor_id=existing.get("flavor_id", ""),
                 pool_id=existing.get("pool_id", ""),
             )
         # HC 不应出现 HCS 专有的顶层资源字段，给出明确提示而不是默默丢弃
@@ -467,11 +566,22 @@ def create_task(
     # HC 额外校验：task_parameter 内必须有 train_flavor 且 pool_id 非空
     if env_type == "HC":
         params = (body.get("task_parameter") or {}).get("parameters") or []
-        tf = next((p for p in params if isinstance(p, dict) and p.get("name") == "train_flavor"), None)
+        tf = next((p for p in params if isinstance(p, dict) and (p.get("name") == "train_flavor" or p.get("format") == "train_flavor")), None)
         if not tf or not (tf.get("value") or {}).get("pool_id"):
             console.print("[red]env_type=HC：task_parameter.parameters 中缺少 train_flavor 或其 pool_id 为空[/red]")
             console.print("[yellow]通过 --pool-id [+ --train-flavor] 注入，或在 YAML 中直接补齐[/yellow]")
             raise typer.Exit(1)
+
+    # 提交前清理：scaffold 模板里的 None 占位值（如未填 dataset_split_ratio / fp16 / training_unit 等）
+    # 直接发到 API 会变成 null，部分接口对可选字段的 null 不友好。这里递归剔除 None。
+    # 只清 None；空字符串/空 dict/空 list 用户可能有意保留，不动。
+    def _strip_nulls(obj):
+        if isinstance(obj, dict):
+            return {k: _strip_nulls(v) for k, v in obj.items() if v is not None}
+        if isinstance(obj, list):
+            return [_strip_nulls(v) for v in obj]
+        return obj
+    body = _strip_nulls(body)
 
     if dry_run:
         console.print("[cyan]--dry-run：以下为将提交的请求体（未发送到 API）[/cyan]")

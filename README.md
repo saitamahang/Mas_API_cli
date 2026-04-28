@@ -327,13 +327,38 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 | `task_parameter` | 复杂对象，**必须先调 `pangu training model-detail` 取 `workflow_info.parameters` 作模板**，改写后放入 YAML |
 
 > `task_parameter` 结构因 `model_id + train_type` 组合而异（learning_rate / warmup / batch_size / training_flavor / sfs_* 等几十项），不能凭空写。固定流程：`model-detail` → 改参数 → `create`。
+>
+> ⚠️ **参数定义 vs 运行时值**：`model-detail` 返回的是参数*定义*（含 `default / constraint / enum / type` 等元信息），但 3.13.5 创建请求体里每条参数还需要带一个 `value` 字段（PDF §3.13.5 请求示例显示 `default` 与 `value` 同时存在，且 `value` 通常 = `default`）。`scaffold` 已自动转换：
+> - `format == "train_flavor"` 项 → `value = {"flavor_id": "TODO", "pool_id": "TODO"}`
+> - `format ∈ {"nfs","pfs"}` 项 → 不写 `value`（多为可选挂载/监控目录，按需自填）
+> - 有 `default` 的项 → `value = default`
+> - 其余 → `value = "TODO-请按描述填值"`
+>
+> 同时 `task_parameter` 还包含 `storages` / `data_requirements` 两个键（来自 `workflow_info`，scaffold 已带过去）。
+
+#### scaffold 已覆盖的可选字段（PDF §3.13.5 全集）
+
+`scaffold` 生成的 YAML 模板会列出所有可选顶层字段（按需保留/删除/填值）：
+
+- 基础：`task_name` / `asset_id` / `model_id` / `model_type` / `train_type` / `model_source` / `model_name` / `train_task_desc`
+- 数据集：`dataset_id` / `dataset_name` / `dataset_version_id` / `eval_*` / `dataset_split_ratio`
+- 断点续训：`checkpoint_id` / `checkpoint_config{save_checkpoints_max, skipped_steps, restore_training, checkpoint_publish_info}`
+- SFS Turbo 加速（HCS）：`sfs_config{model_sfs_enable, dataset_sfs_enable, dataset_preload}`
+- 量化场景：`output_artifact_name` / `quantization_type`
+- 强化学习：`reward_model_id`（接口当前注明"不支持"，保留占位）
+- 三方模型环境变量：`task_env`（model_source=third/pangu-third 时使用）
+- 日志：`plog_level` / `is_input_finished`
+- 资源（HCS）：`pool_node_count` / `flavor` / `t_flops` / `resource_config{pool_type, chip_type, pool_id, pool_name, flavor_id, flavor_name, node_count, fp16, t_flops, training_unit}`
+- 训练参数：`task_parameter{parameters[每条带 value], storages, data_requirements}`
+
+> `create` 提交前会递归剔除请求体中所有值为 `null` 的字段（scaffold 留下未填的 `None` 占位不会发到 API），但保留空字符串 / 空对象 / 空数组（用户可能有意保留）。
 
 #### 资源池注入方式（随 env_type 不同）
 
 | env_type | 写入位置 | 关键字段 |
 |---|---|---|
 | **HCS** | 顶层 `resource_config` + `pool_node_count` / `flavor` / `t_flops` | `resource_config.pool_id` / `pool_type` / `chip_type` / `flavor_id` |
-| **HC**  | `task_parameter.parameters` 中的 `train_flavor` 超参 | `value = {"flavor": "<规格>", "pool_id": "<pool-xxx>"}` |
+| **HC**  | `task_parameter.parameters` 中的 `train_flavor` 超参 | `value = {"flavor_id": "<规格>", "pool_id": "<pool-xxx>"}` |
 
 > HC 下 `pangu training model-detail` 返回的 `workflow_info.parameters` 里**已经包含一个 `train_flavor` 项**，但相较其他超参缺少 `default`。创建任务时只需为该项补 `value`（其他字段 description/type/required 保持不变）。资源池来源仍是 `pangu pool list`，与 HCS 一致。
 

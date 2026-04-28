@@ -334,7 +334,7 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 > - 有 `default` 的项 → `value = default`
 > - 其余 → `value = "TODO-请按描述填值"`
 >
-> 同时 `task_parameter` 还包含 `storages` / `data_requirements` 两个键（来自 `workflow_info`，scaffold 已带过去）。
+> `task_parameter` 是 `workflow_info` 的**完整副本**（不只 `parameters`/`storages`/`data_requirements`，还包含 `extend`/`assets`/`data`/`steps`/`policy` 等模型特有字段），scaffold 已完整带过去。
 
 #### scaffold 已覆盖的可选字段（PDF §3.13.5 全集）
 

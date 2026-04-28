@@ -157,7 +157,7 @@ HC 模式下 `--pool-type / --chip-type / --flavor-id / --nodes / --flavor / --t
 > - 有 `default` → `value = default`
 > - 其余 → `value = "TODO-请按描述填值"`
 >
-> 同时 `task_parameter` 还包含 `storages` / `data_requirements` 两个键（来自 `workflow_info`），scaffold 已一并写入。
+> `task_parameter` 是 `workflow_info` 的**完整副本**（不只 `parameters`/`storages`/`data_requirements`，还包含 `extend`/`assets`/`data`/`steps`/`policy` 等模型特有字段），scaffold 已完整带过去。
 
 #### scaffold 已覆盖的可选字段（PDF §3.13.5 全集）
 模板会列出全部顶层可选字段（不需要的请删除/留空）：
@@ -207,7 +207,7 @@ pangu training stop <task_id>
 | `model_source` | **两套不同枚举，严格区分**：`scaffold` / `model-detail` (3.13.11) 用 `SYSTEM` (盘古预置) / `USER` (训练产物)；`create` (3.13.5) 写入 YAML 的是 `pangu` / `third` / `pangu-third` (盘古预置三方)。scaffold 自动映射 SYSTEM→pangu / USER→third；如属于盘古预置三方模型显式 `--create-model-source pangu-third` |
 | `t_flops` | **[HCS 必填]** 可省，CLI 按 `nodes × flavor_id × flavor` 自动推导。**HC 不需要此字段** |
 | 资源池 | HCS：`resource_config.{pool_id,pool_type,chip_type,flavor_id}`；HC：`task_parameter.parameters[train_flavor].value.{flavor,pool_id}` |
-| `task_parameter` | 由 scaffold 从 `model-detail.workflow_info` 完整填好（含 `parameters`+`storages`+`data_requirements`，每条 parameter 自动补 `value`；HC 下还会注入 `train_flavor` 占位） |
+| `task_parameter` | 由 scaffold 从 `model-detail.workflow_info` **完整复制**（含 `parameters`+`storages`+`data_requirements`+`extend`+`assets`+`data`+`steps`+`policy` 等全部字段；其中 `parameters` 的每条 parameter 自动补 `value`；HC 下还会注入 `train_flavor` 占位） |
 
 ### 3.7 训练完成后发布为模型资产
 ```bash

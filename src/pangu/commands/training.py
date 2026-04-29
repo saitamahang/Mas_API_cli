@@ -295,7 +295,11 @@ def scaffold(
     if strategy:
         detail_body["strategy"] = strategy
 
-    detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
+    env_type = (client.config.env_type or "HCS").upper()
+    if env_type == "HC":
+        detail = client.get(MODEL_DETAIL_PATH, workspace_id=workspace, params=detail_body)
+    else:
+        detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
     workflow_info = detail.get("workflow_info") or {}
     # task_parameter 完整组装：parameters（每条补 value）+ storages + data_requirements
     # —— 与 PDF §3.13.5 请求示例完全一致，避免只把 parameters 部分丢过去
@@ -989,7 +993,12 @@ def model_detail(
     }
     if strategy:
         body["strategy"] = strategy
-    data = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=body)
+
+    env_type = (client.config.env_type or "HCS").upper()
+    if env_type == "HC":
+        data = client.get(MODEL_DETAIL_PATH, workspace_id=workspace, params=body)
+    else:
+        data = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=body)
     output(data, fmt=fmt)
 
 

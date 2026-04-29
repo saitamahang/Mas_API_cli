@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import copy
 import json as _json
 from pathlib import Path
 from typing import List, Optional
@@ -153,28 +152,28 @@ def _paramdef_to_runtime(param: dict) -> dict:
     if "value" in out:
         return out
     if out.get("format") == "train_flavor" or out.get("name") == "train_flavor":
-        out["value"] = {"flavor_id": "", "pool_id": ""}
+        out["value"] = {
+            "flavor_id": "TODO-参考 model-detail 中 train_flavor 的取值范围，例 1*ascend-snt9b",
+            "pool_id":   "TODO-pangu pool list 获取 pool-xxxxx",
+        }
     else:
         out["value"] = out.get("default")
     return out
 
 
-def _build_task_parameter(workflow_info: dict) -> dict:
+def _build_task_parameter(workflow_info: dict, env_type: str = "HCS") -> dict:
     """从 model-detail 的 workflow_info 组装 create 请求体里的 task_parameter。
 
-    PDF §3.13.5 请求示例的 task_parameter 同时包含 parameters / storages / data_requirements
-    三个键，全部来源于 model-detail 的 workflow_info；CLI 应原样带过去而不是只取 parameters。
-
-    实际上 `task_parameter` 就是 `workflow_info` 的完整副本（不同模型可能有 extend / assets /
-    data / steps / policy 等额外字段），只需把 parameters 中的每项从"定义"转成带 value 的
-    "运行时参数"即可。
+    - HCS / HC：task_parameter 均包含 parameters / storages / data_requirements
+    - workflow_info 中的 extend / assets / data / steps / policy 等其他字段不携带
     """
     wi = workflow_info or {}
-    # 深拷贝 workflow_info 全部内容，避免只取三个键导致遗漏
-    task_parameter = {k: copy.deepcopy(v) for k, v in wi.items()}
-    # 只对 parameters 做 value 转换（定义 → 运行时值）
-    task_parameter["parameters"] = [_paramdef_to_runtime(p) for p in (wi.get("parameters") or [])]
-    return task_parameter
+    params = [_paramdef_to_runtime(p) for p in (wi.get("parameters") or [])]
+    return {
+        "parameters":        params,
+        "storages":          wi.get("storages") or [],
+        "data_requirements": wi.get("data_requirements") or [],
+    }
 
 
 def _extract_first_job_id(detail: dict) -> str:
@@ -301,9 +300,8 @@ def scaffold(
     else:
         detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
     workflow_info = detail.get("workflow_info") or {}
-    # task_parameter 完整组装：parameters（每条补 value）+ storages + data_requirements
-    # —— 与 PDF §3.13.5 请求示例完全一致，避免只把 parameters 部分丢过去
-    task_parameter = _build_task_parameter(workflow_info)
+    # HC：task_parameter 只取 parameters；HCS：还包含 storages / data_requirements
+    task_parameter = _build_task_parameter(workflow_info, env_type=env_type)
     parameters = task_parameter["parameters"]
 
     # YAML 中 model_source 是给 3.13.5 create 用的（pangu|third|pangu-third），
@@ -317,7 +315,6 @@ def scaffold(
     else:
         body_model_source = model_source  # 兜底：用户传了非标值也透传
 
-    env_type = (client.config.env_type or "HCS").upper()
 
     # 根据 model-detail 返回，先取若干字段做默认占位（避免 user 漏传）
     suggested_asset_id = asset_id or detail.get("asset_id") or "TODO-pangu model list 获取 asset_id"

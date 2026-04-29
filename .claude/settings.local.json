@@ -19,7 +19,8 @@
       "Bash(pip3 show *)",
       "Bash(PYTHONPATH=src python3 -c \"from pangu.commands.training import app; print\\('training.py OK'\\)\")",
       "Bash(grep -n \"^pangu \\\\|^### \\\\|^---$\" /Users/liyuhang/Code/1.Mas_API_cli/README.md)",
-      "Bash(PYTHONPATH=src python3 -c \"from pangu.commands import training; print\\('OK'\\)\")"
+      "Bash(PYTHONPATH=src python3 -c \"from pangu.commands import training; print\\('OK'\\)\")",
+      "Bash(PYTHONPATH=src python3 *)"
     ]
   }
 }

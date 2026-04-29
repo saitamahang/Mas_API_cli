@@ -161,18 +161,35 @@ def _paramdef_to_runtime(param: dict) -> dict:
     return out
 
 
-def _build_task_parameter(workflow_info: dict, env_type: str = "HCS") -> dict:
+def _build_task_parameter(workflow_info: dict, env_type: str = "HCS", dataset_obs_url: Optional[str] = None) -> dict:
     """从 model-detail 的 workflow_info 组装 create 请求体里的 task_parameter。
 
     - HCS / HC：task_parameter 均包含 parameters / storages / data_requirements
     - workflow_info 中的 extend / assets / data / steps / policy 等其他字段不携带
+    - HC 环境下 data_requirements 每个对象需补 value / realValue（含 object_type + obs_url）
     """
     wi = workflow_info or {}
     params = [_paramdef_to_runtime(p) for p in (wi.get("parameters") or [])]
+
+    data_reqs = wi.get("data_requirements") or []
+    if env_type == "HC":
+        enriched = []
+        for dr in data_reqs:
+            if isinstance(dr, dict):
+                dr_copy = dict(dr)
+                obs_url = dataset_obs_url or "TODO-通过 pangu dataset get <dataset_name> 查询 sample_path 并去掉 obs:/ 前缀"
+                val = {"object_type": ["DIRECTORY"], "obs_url": obs_url}
+                dr_copy["value"] = val
+                dr_copy["realValue"] = val
+                enriched.append(dr_copy)
+            else:
+                enriched.append(dr)
+        data_reqs = enriched
+
     return {
         "parameters":        params,
         "storages":          wi.get("storages") or [],
-        "data_requirements": wi.get("data_requirements") or [],
+        "data_requirements": data_reqs,
     }
 
 
@@ -278,6 +295,8 @@ def scaffold(
     asset_id: Optional[str] = typer.Option(None, "--asset-id", help="已知的 asset_id，直接填入模板；不传则留 TODO 占位"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     out_file: Optional[str] = typer.Option(None, "--out", help="写入到指定文件；不传则打印到 stdout (便于 `> train.yaml`)"),
+    dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="数据集名称，HC 环境下用于自动查询 OBS 路径填充 data_requirements"),
+    dataset_catalog: str = typer.Option("ORIGINAL", "--dataset-catalog", help="数据集类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -299,9 +318,30 @@ def scaffold(
         detail = client.get(MODEL_DETAIL_PATH, workspace_id=workspace, params=detail_body)
     else:
         detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
+
+    # HC 环境下：如有 dataset_name，自动查 OBS 路径用于填充 data_requirements
+    dataset_obs_url = None
+    if env_type == "HC" and dataset_name:
+        try:
+            ds_detail = client.get(
+                "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/{dataset_name}",
+                workspace_id=workspace,
+                params={"catalog": dataset_catalog},
+                dataset_name=dataset_name,
+            )
+            sample_path = ds_detail.get("sample_path", "")
+            for prefix in ("obs://", "obs:/"):
+                if sample_path.startswith(prefix):
+                    sample_path = sample_path[len(prefix):]
+                    break
+            dataset_obs_url = sample_path or None
+            if dataset_obs_url:
+                console.print(f"[cyan]已查询数据集 {dataset_name} OBS 路径: {dataset_obs_url}[/cyan]")
+        except Exception as e:
+            console.print(f"[yellow]查询数据集 {dataset_name} 详情失败: {e}，data_requirements 中 obs_url 将使用 TODO 占位[/yellow]")
+
     workflow_info = detail.get("workflow_info") or {}
-    # HC：task_parameter 只取 parameters；HCS：还包含 storages / data_requirements
-    task_parameter = _build_task_parameter(workflow_info, env_type=env_type)
+    task_parameter = _build_task_parameter(workflow_info, env_type=env_type, dataset_obs_url=dataset_obs_url)
     parameters = task_parameter["parameters"]
 
     # YAML 中 model_source 是给 3.13.5 create 用的（pangu|third|pangu-third），

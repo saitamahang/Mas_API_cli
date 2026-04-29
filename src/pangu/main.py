@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+from importlib.metadata import version as get_version
 from typing import Optional
 
 import typer
@@ -11,12 +11,28 @@ from rich.console import Console
 from pangu.auth import AuthManager
 from pangu.config import PanguConfig
 
+try:
+    __version__ = get_version("pangu")
+except Exception:
+    __version__ = "0.1.0"
+
 app = typer.Typer(
     name="pangu",
     help="盘古大模型平台管理 CLI",
     no_args_is_help=True,
 )
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    version: bool = typer.Option(
+        False, "--version", "-v", is_eager=True, help="显示版本号",
+    ),
+):
+    if version:
+        typer.echo(f"pangu {__version__}")
+        raise typer.Exit()
 
 
 # ---- 注册子命令 ----

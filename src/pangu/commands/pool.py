@@ -24,6 +24,7 @@ COLUMNS = [
     ("scope",      "作业类型"),
     ("node_count", "节点数"),
     ("chip_type",  "芯片"),
+    ("flavor_id",  "规格 ID"),
     ("arch",       "架构"),
     ("create_time","创建时间"),
 ]

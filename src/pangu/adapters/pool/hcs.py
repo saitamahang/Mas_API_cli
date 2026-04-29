@@ -38,6 +38,11 @@ class PoolAdapterHCS(PoolAdapter):
 
             node_count = len(nodes) or sum(r.get("count", 0) for r in resources)
 
+            # HCS resources 列表中可能含 flavor_id（如 "modelarts.pool.visual.8xlarge"）
+            flavor_id = ""
+            if resources:
+                flavor_id = resources[0].get("flavor_id") or resources[0].get("flavor", "")
+
             result.append({
                 "pool_id":    metadata.get("name", ""),
                 "pool_name":  labels.get("os.modelarts/name", ""),
@@ -46,6 +51,7 @@ class PoolAdapterHCS(PoolAdapter):
                 "scope":      "/".join(spec.get("scope") or []),
                 "node_count": node_count,
                 "chip_type":  p.get("chip_type", ""),
+                "flavor_id":  flavor_id,
                 "arch":       p.get("arch", ""),
                 "create_time": metadata.get("creationTimestamp", ""),
             })

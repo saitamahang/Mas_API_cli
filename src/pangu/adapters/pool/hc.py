@@ -63,6 +63,7 @@ class PoolAdapterHC(PoolAdapter):
                 "scope":      p.get("job_type", ""),       # HC 单值
                 "node_count": p.get("node_count", 0),
                 "chip_type":  p.get("chip_type", ""),
+                "flavor_id":  p.get("flavor_id", ""),      # HC 创建训练任务时需要
                 "arch":        "",                          # HC 无 arch 字段
                 "create_time": p.get("create_time", ""),
                 # HC 额外字段

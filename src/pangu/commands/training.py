@@ -140,32 +140,22 @@ def _paramdef_to_runtime(param: dict) -> dict:
     而 3.13.5 创建训练任务请求体的 task_parameter.parameters 里每一项需要带上一个 `value` 字段
     （PDF §3.13.5 请求示例每条参数都同时包含 default 与 value）。
 
-    转换规则（保留所有兄弟字段，只补 value）：
-      - format == "train_flavor" → value = {"flavor_id": "TODO-...", "pool_id": "TODO-..."}
-        (HC/HCS 都需要的资源池占位；HC 后续由 _inject_train_flavor 覆盖；HCS 也可走顶层 resource_config)
-      - format in ("nfs", "pfs")  → 不写 value（占位/可选；用户按需在 YAML 中补 value）
-      - 已有 default               → value = default（与 PDF 示例一致：value 通常等于 default）
-      - 既无 default 又无特殊 format → value = "TODO-请按 description/constraint 填值"
+    规则：
+      - 已有 value → 保留不动（避免覆盖用户/上游已设置的值）
+      - format == "train_flavor" → value = {"flavor_id": "", "pool_id": ""}
+        （HC 资源池对象；值从 pangu pool list 获取，后续由 _inject_train_flavor 覆盖）
+      - 有 default  → value = default（与 PDF 示例一致）
+      - 无 default  → value = None（YAML 中显示为 null，提醒用户必须手动填写）
     """
     if not isinstance(param, dict):
         return param
     out = dict(param)
     if "value" in out:
-        return out  # 已有 value 不动，避免覆盖用户/上游已设置的值
-    fmt = out.get("format")
-    if fmt == "train_flavor":
-        out["value"] = {
-            "flavor_id": "TODO-参考 model-detail 中 train_flavor 的取值范围，例 1*ascend-snt9b",
-            "pool_id":   "TODO-pangu pool list 获取 pool-xxxxx",
-        }
-    elif fmt in ("nfs", "pfs"):
-        # nfs/pfs 类型多为可选挂载/监控目录；留给用户在 YAML 里按需补 value，避免误传空对象
-        pass
-    elif "default" in out:
-        out["value"] = out["default"]
+        return out
+    if out.get("format") == "train_flavor" or out.get("name") == "train_flavor":
+        out["value"] = {"flavor_id": "", "pool_id": ""}
     else:
-        title = out.get("title") or out.get("name") or "?"
-        out["value"] = f"TODO-请按描述填值 ({title})"
+        out["value"] = out.get("default")
     return out
 
 
@@ -518,7 +508,7 @@ def create_task(
             # 取已有 train_flavor.value 作为基底，命令行只覆盖给出的字段
             existing = {}
             for p in params:
-                if isinstance(p, dict) and p.get("name") == "train_flavor":
+                if isinstance(p, dict) and (p.get("name") == "train_flavor" or p.get("format") == "train_flavor"):
                     existing = dict(p.get("value") or {})
                     break
             if train_flavor: existing["flavor_id"]  = train_flavor

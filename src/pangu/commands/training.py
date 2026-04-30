@@ -361,6 +361,7 @@ def scaffold(
 
     # 公共骨架：3.13.5 PDF 中所有顶层可选字段都列上 TODO，让用户清楚有哪些选项
     common_top: dict = {
+        "_generated_by":          "scaffold",  # 内部标记，create 成功后自动清理配置文件
         "task_name":              "TODO-请填写任务名称（中文/字母/数字/中划线/下划线，不以数字开头，≤64）",
         "asset_id":               suggested_asset_id,
         "model_id":               model_id,
@@ -499,6 +500,8 @@ def create_task(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待任务跑到终态 (completed/failed/stopped)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="只组装并打印请求体 (YAML)，不实际提交 API；skill 预检/调试用"),
+    rm_config: bool = typer.Option(False, "--rm-config", help="创建成功后强制删除配置文件（无论是否 scaffold 生成）"),
+    keep_config: bool = typer.Option(False, "--keep-config", help="阻止 scaffold 生成的模板在创建成功后自动清理"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table | json | yaml"),
 ):
     """创建训练任务 (3.13.5)
@@ -619,6 +622,9 @@ def create_task(
         return obj
     body = _strip_nulls(body)
 
+    # 提取 scaffold 标记并移除，避免提交到 API
+    is_scaffold_generated = body.pop("_generated_by", None) == "scaffold"
+
     if dry_run:
         console.print("[cyan]--dry-run：以下为将提交的请求体（未发送到 API）[/cyan]")
         typer.echo(yaml.safe_dump(body, allow_unicode=True, sort_keys=False))
@@ -628,6 +634,18 @@ def create_task(
     task_id = data.get("task_id", "")
 
     output(data, fmt=fmt, detail_fields=DETAIL_FIELDS, title="训练任务已创建", status_key="task_status")
+
+    # 配置文件清理：scaffold 生成的模板默认自动删除；手写 YAML 保留（可用 --rm-config / --keep-config 控制）
+    if config:
+        should_remove = rm_config or (is_scaffold_generated and not keep_config)
+        if should_remove:
+            try:
+                Path(config).unlink()
+                console.print(f"[cyan]已自动清理配置文件: {config}[/cyan]")
+            except Exception as e:
+                console.print(f"[yellow]清理配置文件失败: {e}[/yellow]")
+        else:
+            console.print(f"[dim]配置文件保留: {config}（如不再使用建议删除）[/dim]")
 
     if wait and task_id:
         console.print(f"[cyan]等待任务 {task_id} 完成...[/cyan]")

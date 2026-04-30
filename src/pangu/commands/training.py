@@ -404,33 +404,34 @@ def scaffold(
         "reward_model_id":        "",
         # 三方模型环境变量（可选，model_source=third/pangu-third 时使用）
         "task_env":               {},
-        # 日志与优先级
-        "plog_level":             3,   # -1 不开启 | 0 info | 1 debug | 2 warning | 3 error
-        "priority":               3,   # 优先级：3=高
+        # 日志
+        "plog_level":             -1,
         "is_input_finished":      1,
-        # 训练单元（卡数）：1|2|4|8|16；16 时 HCS 的 pool_node_count 自动为 2
-        "training_unit":          1,
         # 训练运行参数（含 storages / data_requirements / parameters[每条带 value]）
         "task_parameter":         task_parameter,
     }
 
     if env_type == "HC":
         # HC：资源池作为 train_flavor 超参注入 task_parameter.parameters
-        # 这里 _inject_train_flavor 会就地更新或追加 train_flavor 项；保留兄弟字段
+        # training_unit / priority / plog_level 为 HC 特有字段
+        common_top.update({
+            "training_unit": 1,   # 训练卡数：1|2|4|8|16；16 时 pool_node_count 自动为 2
+            "priority":      3,   # 优先级：3=高
+            "plog_level":    3,   # 日志级别：-1 不开启 | 0 info | 1 debug | 2 warning | 3 error
+        })
+        # pool_node_count 根据 training_unit 自动推导
+        training_unit = common_top.get("training_unit", 1)
+        common_top["pool_node_count"] = 2 if training_unit == 16 else 1
         common_top["task_parameter"]["parameters"] = _inject_train_flavor(
             parameters,
             flavor_id="TODO-flavor_id 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）",
             pool_id="TODO-pangu pool list 获取 pool-xxxxx",
         )
-        # HC 不使用顶层 pool_node_count / flavor / t_flops / resource_config
         skeleton = common_top
     else:
         # HCS：资源池走顶层 resource_config + pool_node_count / flavor / t_flops
-        # pool_node_count 根据 training_unit 自动推导：16 卡用 2 节点，其余 1 节点
-        training_unit = common_top.get("training_unit", 1)
-        pool_node_count = 2 if training_unit == 16 else 1
         common_top.update({
-            "pool_node_count": pool_node_count,
+            "pool_node_count": 1,
             "flavor":          313,
             "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
             # PDF §3.13.5 ResourceConfig 全字段；非必填项保留占位让用户按需取舍

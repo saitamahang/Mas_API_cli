@@ -177,7 +177,7 @@ def _build_task_parameter(workflow_info: dict, env_type: str = "HCS", dataset_ob
         for dr in data_reqs:
             if isinstance(dr, dict):
                 dr_copy = dict(dr)
-                obs_url = dataset_obs_url or "TODO-通过 pangu dataset get <dataset_name> 查询 sample_path 并去掉 obs:/ 前缀"
+                obs_url = dataset_obs_url or "TODO-通过 pangu dataset get <dataset_name> 查询 sample_path，去掉 obs: 前缀保留 /，末尾加 /data.manifest"
                 dr_copy["value"] = {"object_type": ["DIRECTORY"], "obs_url": obs_url}
                 dr_copy["realValue"] = {"object_type": ["DIRECTORY"], "obs_url": obs_url}
                 enriched.append(dr_copy)
@@ -329,10 +329,11 @@ def scaffold(
                 dataset_name=dataset_name,
             )
             sample_path = ds_detail.get("sample_path", "")
-            for prefix in ("obs://", "obs:/"):
-                if sample_path.startswith(prefix):
-                    sample_path = sample_path[len(prefix):]
-                    break
+            # 去掉 obs: 前缀，保留 /
+            if sample_path.startswith("obs:"):
+                sample_path = sample_path[4:]  # 去掉 "obs:"，保留开头的 "/"
+            # 末尾追加 data.manifest
+            sample_path = sample_path.rstrip("/") + "/data.manifest"
             dataset_obs_url = sample_path or None
             if dataset_obs_url:
                 console.print(f"[cyan]已查询数据集 {dataset_name} OBS 路径: {dataset_obs_url}[/cyan]")

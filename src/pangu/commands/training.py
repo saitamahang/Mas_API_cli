@@ -329,9 +329,10 @@ def scaffold(
                 dataset_name=dataset_name,
             )
             sample_path = ds_detail.get("sample_path", "")
-            # 去掉 obs: 前缀，保留 /
+            # 去掉 obs: / obs:// 前缀，清理开头的 : 和 /，再确保保留开头的 /
             if sample_path.startswith("obs:"):
-                sample_path = sample_path[4:]  # 去掉 "obs:"，保留开头的 "/"
+                sample_path = sample_path[4:].lstrip(":/")
+            sample_path = "/" + sample_path.lstrip("/")
             # 末尾追加 data.manifest
             sample_path = sample_path.rstrip("/") + "/data.manifest"
             dataset_obs_url = sample_path or None
@@ -403,9 +404,12 @@ def scaffold(
         "reward_model_id":        "",
         # 三方模型环境变量（可选，model_source=third/pangu-third 时使用）
         "task_env":               {},
-        # 日志
-        "plog_level":             -1,
+        # 日志与优先级
+        "plog_level":             3,   # -1 不开启 | 0 info | 1 debug | 2 warning | 3 error
+        "priority":               3,   # 优先级：3=高
         "is_input_finished":      1,
+        # 训练单元（卡数）：1|2|4|8|16；16 时 HCS 的 pool_node_count 自动为 2
+        "training_unit":          1,
         # 训练运行参数（含 storages / data_requirements / parameters[每条带 value]）
         "task_parameter":         task_parameter,
     }
@@ -422,8 +426,11 @@ def scaffold(
         skeleton = common_top
     else:
         # HCS：资源池走顶层 resource_config + pool_node_count / flavor / t_flops
+        # pool_node_count 根据 training_unit 自动推导：16 卡用 2 节点，其余 1 节点
+        training_unit = common_top.get("training_unit", 1)
+        pool_node_count = 2 if training_unit == 16 else 1
         common_top.update({
-            "pool_node_count": 1,
+            "pool_node_count": pool_node_count,
             "flavor":          313,
             "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
             # PDF §3.13.5 ResourceConfig 全字段；非必填项保留占位让用户按需取舍

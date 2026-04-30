@@ -180,7 +180,7 @@ def _build_task_parameter(workflow_info: dict, env_type: str = "HCS", dataset_ob
                 obs_url = dataset_obs_url or "TODO-通过 pangu dataset get <dataset_name> 查询 sample_path 并去掉 obs:/ 前缀"
                 val = {"object_type": ["DIRECTORY"], "obs_url": obs_url}
                 dr_copy["value"] = val
-                dr_copy["realValue"] = val
+                dr_copy["realValue"] = dict(val)  # 独立拷贝，避免 YAML 锚点/别名
                 enriched.append(dr_copy)
             else:
                 enriched.append(dr)

@@ -342,6 +342,12 @@ def scaffold(
             console.print(f"[yellow]查询数据集 {dataset_name} 详情失败: {e}，data_requirements 中 obs_url 将使用 TODO 占位[/yellow]")
 
     workflow_info = detail.get("workflow_info") or {}
+    raw_params = workflow_info.get("parameters") or []
+    if len(raw_params) <= 1:
+        console.print(
+            f"[yellow]警告: model-detail 返回的 parameters 数量为 {len(raw_params)}，"
+            "可能模型暂无可配超参，或 API 响应异常[/yellow]"
+        )
     task_parameter = _build_task_parameter(workflow_info, env_type=env_type, dataset_obs_url=dataset_obs_url)
     parameters = task_parameter["parameters"]
 
@@ -479,7 +485,7 @@ def create_task(
     model_id: Optional[str] = typer.Option(None, "--model-id", help="训练模型 ID (NLP/MM 必填；预置模型时=asset_id，训练后模型取自已发布模型列表)"),
     model_type: Optional[str] = typer.Option(None, "--model-type", help="(必填) " + HELP_MODEL_TYPE),
     train_type: Optional[str] = typer.Option(None, "--train-type", help="(必填，默认 SFT) " + HELP_TRAIN_TYPE),
-    model_source: Optional[str] = typer.Option(None, "--model-source", help="(必填) " + HELP_MODEL_SRC),
+    model_source: Optional[str] = typer.Option(None, "--model-source", help=HELP_MODEL_SRC + "；默认 pangu"),
     model_name: Optional[str] = typer.Option(None, "--model-name", help="模型名称 (可选)"),
     output_artifact_name: Optional[str] = typer.Option(None, "--output-artifact-name", help="任务输出产物名称 (量化场景使用)"),
     quantization_type: Optional[str] = typer.Option(None, "--quantization-type", help="量化算法类型，例如 QUANTIZATION-W8A8C"),
@@ -532,7 +538,7 @@ def create_task(
     if model_id:                 body["model_id"]              = model_id
     if model_type:               body["model_type"]            = model_type
     if train_type:               body["train_type"]            = train_type
-    if model_source:             body["model_source"]          = model_source
+    if model_source is not None: body["model_source"]          = model_source
     if model_name:               body["model_name"]            = model_name
     if output_artifact_name:     body["output_artifact_name"]  = output_artifact_name
     if quantization_type:        body["quantization_type"]     = quantization_type
@@ -594,6 +600,10 @@ def create_task(
                 console.print(f"[cyan]自动推导 t_flops = nodes({n}) × flavor_id({fi}) × flavor({fv}) = {body['t_flops']}[/cyan]")
             except (TypeError, ValueError):
                 pass  # 缺任一项就不推，留给下面必填校验报错
+
+    # model_source 默认值兜底
+    if body.get("model_source") in (None, ""):
+        body["model_source"] = "pangu"
 
     # 必填校验：HCS 多 t_flops；HC 不需要 t_flops（资源走 task_parameter）
     required = ["asset_id", "task_name", "model_type", "train_type", "model_source", "task_parameter"]

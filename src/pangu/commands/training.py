@@ -14,6 +14,8 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from pangu.adapters import get_pool_adapter
+from pangu.adapters.base import PoolRequest
 from pangu.client import PanguClient
 from pangu.output import output
 
@@ -161,6 +163,54 @@ def _paramdef_to_runtime(param: dict) -> dict:
     return out
 
 
+def _fetch_dataset_info(client: PanguClient, dataset_name: str, catalog: str, workspace: Optional[str]) -> dict:
+    """查询数据集详情，返回可用于填充模板的字段。"""
+    try:
+        ds = client.get(
+            "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/{dataset_name}",
+            workspace_id=workspace,
+            params={"catalog": catalog},
+            dataset_name=dataset_name,
+        )
+        return {
+            "dataset_id":         ds.get("dataset_id", ""),
+            "dataset_name":       ds.get("name", dataset_name),
+            "dataset_version_id": ds.get("version_id", ""),
+        }
+    except Exception as e:
+        console.print(f"[yellow]查询数据集 {dataset_name} 详情失败: {e}[/yellow]")
+        return {}
+
+
+def _fetch_pool_info(client: PanguClient, pool_id: str, env_type: str, workspace: Optional[str]) -> dict:
+    """查询资源池列表并匹配指定 pool_id，返回资源池详情。"""
+    try:
+        adapter = get_pool_adapter(env_type)
+        req = PoolRequest(
+            job_type="train",
+            chip_types=["D910B3"],
+            use_type="private",
+        )
+        body = adapter.build_request(req)
+
+        if adapter.workspace_in_path:
+            data = client.post(adapter.path, workspace_id=workspace, json=body)
+        else:
+            wid = client.config.get_workspace_id(workspace)
+            extra_hdrs = adapter.extra_headers(wid)
+            data = client.post(adapter.path, workspace_id=None, json=body, extra_headers=extra_hdrs)
+
+        items = adapter.normalize(data)
+        for p in items:
+            if p.get("pool_id") == pool_id:
+                return dict(p)
+        console.print(f"[yellow]未在资源池列表中找到 pool_id={pool_id}[/yellow]")
+        return {}
+    except Exception as e:
+        console.print(f"[yellow]查询资源池列表失败: {e}[/yellow]")
+        return {}
+
+
 def _build_task_parameter(workflow_info: dict, env_type: str = "HCS", dataset_obs_url: Optional[str] = None) -> dict:
     """从 model-detail 的 workflow_info 组装 create 请求体里的 task_parameter。
 
@@ -294,8 +344,11 @@ def scaffold(
     asset_id: Optional[str] = typer.Option(None, "--asset-id", help="已知的 asset_id，直接填入模板；不传则留 TODO 占位"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     out_file: Optional[str] = typer.Option(None, "--out", help="写入到指定文件；不传则打印到 stdout (便于 `> train.yaml`)"),
-    dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="数据集名称，HC 环境下用于自动查询 OBS 路径填充 data_requirements"),
+    dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="训练数据集名称，自动查询 dataset_id / dataset_version_id / OBS 路径并填充模板"),
     dataset_catalog: str = typer.Option("ORIGINAL", "--dataset-catalog", help="数据集类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
+    eval_dataset_name: Optional[str] = typer.Option(None, "--eval-dataset-name", help="验证数据集名称，自动查询 eval_dataset_id 等并填充模板"),
+    eval_dataset_catalog: str = typer.Option("ORIGINAL", "--eval-dataset-catalog", help="验证数据集类别: ORIGINAL | PROCESS | PUBLISH"),
+    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID，自动查询 flavor_id / chip_type 等资源信息并填充模板"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -318,28 +371,31 @@ def scaffold(
     else:
         detail = client.post(MODEL_DETAIL_PATH, workspace_id=workspace, json=detail_body)
 
-    # HC 环境下：如有 dataset_name，自动查 OBS 路径用于填充 data_requirements
+    # scaffold 内部查询：数据集 / 验证集 / 资源池 信息
+    ds_info = _fetch_dataset_info(client, dataset_name, dataset_catalog, workspace) if dataset_name else {}
+    eval_ds_info = _fetch_dataset_info(client, eval_dataset_name, eval_dataset_catalog, workspace) if eval_dataset_name else {}
+    pool_info = _fetch_pool_info(client, pool_id, env_type, workspace) if pool_id else {}
+
+    # HC 环境下：从数据集详情提取 OBS 路径用于填充 data_requirements
     dataset_obs_url = None
-    if env_type == "HC" and dataset_name:
+    if env_type == "HC" and ds_info.get("dataset_name"):
         try:
             ds_detail = client.get(
                 "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/{dataset_name}",
                 workspace_id=workspace,
                 params={"catalog": dataset_catalog},
-                dataset_name=dataset_name,
+                dataset_name=ds_info["dataset_name"],
             )
             sample_path = ds_detail.get("sample_path", "")
-            # 去掉 obs: / obs:// 前缀，清理开头的 : 和 /，再确保保留开头的 /
             if sample_path.startswith("obs:"):
                 sample_path = sample_path[4:].lstrip(":/")
             sample_path = "/" + sample_path.lstrip("/")
-            # 末尾追加 data.manifest
             sample_path = sample_path.rstrip("/") + "/data.manifest"
             dataset_obs_url = sample_path or None
             if dataset_obs_url:
                 console.print(f"[cyan]已查询数据集 {dataset_name} OBS 路径: {dataset_obs_url}[/cyan]")
         except Exception as e:
-            console.print(f"[yellow]查询数据集 {dataset_name} 详情失败: {e}，data_requirements 中 obs_url 将使用 TODO 占位[/yellow]")
+            console.print(f"[yellow]查询数据集 OBS 路径失败: {e}[/yellow]")
 
     workflow_info = detail.get("workflow_info") or {}
     raw_params = workflow_info.get("parameters") or []
@@ -377,13 +433,13 @@ def scaffold(
         "model_source":           body_model_source,
         "model_name":             "",  # 可选，不填走默认
         "train_task_desc":        "",
-        # 数据集（可选，按需填）
-        "dataset_id":             "",
-        "dataset_name":           "",
-        "dataset_version_id":     "",
-        "eval_dataset_id":        "",
-        "eval_dataset_name":      "",
-        "eval_dataset_version_id":"",
+        # 数据集（可选，按需填；传 --dataset-name / --eval-dataset-name 时自动查询填充）
+        "dataset_id":             ds_info.get("dataset_id", ""),
+        "dataset_name":           ds_info.get("dataset_name", ""),
+        "dataset_version_id":     ds_info.get("dataset_version_id", ""),
+        "eval_dataset_id":        eval_ds_info.get("dataset_id", ""),
+        "eval_dataset_name":      eval_ds_info.get("dataset_name", ""),
+        "eval_dataset_version_id":eval_ds_info.get("dataset_version_id", ""),
         "dataset_split_ratio":    None,  # 1~50；不需要可删除
         # 断点续训（可选）
         "checkpoint_id":          "",
@@ -428,14 +484,18 @@ def scaffold(
         # pool_node_count 根据 training_unit 自动推导
         training_unit = common_top.get("training_unit", 1)
         common_top["pool_node_count"] = 2 if training_unit == 16 else 1
-        common_top["task_parameter"]["parameters"] = _inject_train_flavor(
-            parameters,
-            flavor_id="TODO-flavor_id 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）",
-            pool_id="TODO-pangu pool list 获取 pool-xxxxx",
-        )
+
+        # 如传了 --pool-id 且查询成功，填充真实资源池信息
+        tf_flavor = pool_info.get("flavor_id") or "TODO-flavor_id 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）"
+        tf_pool   = pool_info.get("pool_id") or "TODO-pangu pool list 获取 pool-xxxxx"
+        common_top["task_parameter"]["parameters"] = _inject_train_flavor(parameters, flavor_id=tf_flavor, pool_id=tf_pool)
         skeleton = common_top
     else:
         # HCS：资源池走顶层 resource_config + pool_node_count / flavor / t_flops
+        # 如传了 --pool-id 且查询成功，填充真实资源池信息
+        pool_id_val   = pool_info.get("pool_id", "") or "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)"
+        chip_type_val = pool_info.get("chip_type", "") or "TODO-如 Snt9B3 / Snt9B4"
+        flavor_id_val = pool_info.get("flavor_id", "") or "TODO-专属池取 1|2|4|8"
         common_top.update({
             "pool_node_count": 1,
             "flavor":          313,
@@ -443,10 +503,10 @@ def scaffold(
             # PDF §3.13.5 ResourceConfig 全字段；非必填项保留占位让用户按需取舍
             "resource_config": {
                 "pool_type":       "private",                    # public | private（默认 private）
-                "chip_type":       "TODO-如 Snt9B3 / Snt9B4",
-                "pool_id":         "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)",
-                "pool_name":       "",
-                "flavor_id":       "TODO-专属池取 1|2|4|8",
+                "chip_type":       chip_type_val,
+                "pool_id":         pool_id_val,
+                "pool_name":       pool_info.get("pool_name", ""),
+                "flavor_id":       flavor_id_val,
                 "flavor_name":     "",
                 "node_count":      1,    # flavor_id=8 且 >1 即多机多卡
                 "fp16":            None, # 313 / 280 等

@@ -464,8 +464,6 @@ def scaffold(
         "quantization_type":      "",
         # 强化学习 RLHF 场景（当前接口注明"不支持"，保留占位说明）
         "reward_model_id":        "",
-        # 三方模型环境变量（可选，model_source=third/pangu-third 时使用）
-        "task_env":               {},
         # 日志
         "plog_level":             -1,
         "is_input_finished":      1,

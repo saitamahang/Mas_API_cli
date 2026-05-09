@@ -387,9 +387,13 @@ def scaffold(
                 dataset_name=ds_info["dataset_name"],
             )
             sample_path = ds_detail.get("sample_path", "")
-            if sample_path.startswith("obs:"):
-                sample_path = sample_path[4:].lstrip(":/")
-            sample_path = "/" + sample_path.lstrip("/")
+            # 去掉 obs:// 或 obs: 前缀，确保保留一个前导 /
+            if sample_path.startswith("obs://"):
+                sample_path = sample_path[6:]
+            elif sample_path.startswith("obs:"):
+                sample_path = sample_path[4:]
+            if not sample_path.startswith("/"):
+                sample_path = "/" + sample_path
             sample_path = sample_path.rstrip("/") + "/data.manifest"
             dataset_obs_url = sample_path or None
             if dataset_obs_url:

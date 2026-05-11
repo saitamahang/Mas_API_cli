@@ -67,23 +67,19 @@ HELP_MIGRATE_TYPE = "模型类型过滤：model(模型)|assembly(组件)"
 LIST_COLUMNS = [
     ("asset_id",       "资产 ID"),
     ("asset_name",     "名称"),
+    ("asset_version",  "版本"),
     ("asset_type",     "类型"),
-    ("sub_asset_type", "子类型"),
     ("asset_source",   "来源"),
-    ("category",       "分类"),
-    ("create_time",    "创建时间"),
 ]
 
 LIST_EXT_COLUMNS = [
     ("asset_id",       "资产 ID"),
-    ("model_id",       "模型 ID"),
     ("asset_name",     "名称"),
+    ("asset_version",  "版本"),
     ("asset_type",     "类型"),
     ("asset_source",   "来源"),
     ("can_train",      "可训练"),
     ("can_deploy",     "可部署"),
-    ("is_used",        "已使用"),
-    ("create_time",    "创建时间"),
 ]
 
 DETAIL_FIELDS = [

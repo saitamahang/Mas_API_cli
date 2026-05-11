@@ -48,15 +48,11 @@ CONTENT_TYPE_FILE_FORMAT: dict[str, str] = {
 
 
 LIST_COLUMNS = [
-    ("id",           "数据集 ID"),
-    ("name",         "名称"),
-    ("catalog",      "类别"),
-    ("modal",        "模态"),
-    ("content_type", "内容类型"),
-    ("status",       "状态"),
-    ("record_num",   "样本数"),
-    ("size",         "大小(Byte)"),
-    ("create_time",  "创建时间"),
+    ("id",       "数据集 ID"),
+    ("name",     "名称"),
+    ("catalog",  "类别"),
+    ("modal",    "模态"),
+    ("status",   "状态"),
 ]
 
 DETAIL_FIELDS = [

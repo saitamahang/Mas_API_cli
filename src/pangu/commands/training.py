@@ -441,9 +441,6 @@ def scaffold(
         "dataset_id":             ds_info.get("dataset_id", ""),
         "dataset_name":           ds_info.get("dataset_name", ""),
         "dataset_version_id":     ds_info.get("dataset_version_id", ""),
-        "eval_dataset_id":        eval_ds_info.get("dataset_id", ""),
-        "eval_dataset_name":      eval_ds_info.get("dataset_name", ""),
-        "eval_dataset_version_id":eval_ds_info.get("dataset_version_id", ""),
         "dataset_split_ratio":    None,  # 1~50；不需要可删除
         # 断点续训（可选）
         "checkpoint_id":          "",
@@ -474,6 +471,14 @@ def scaffold(
         # 训练运行参数（含 storages / data_requirements / parameters[每条带 value]）
         "task_parameter":         task_parameter,
     }
+
+    # 评测数据集：仅在传入 --eval-dataset-name 时生成，空值提交会被接口判定为非法
+    if eval_ds_info:
+        common_top.update({
+            "eval_dataset_id":         eval_ds_info.get("dataset_id", ""),
+            "eval_dataset_name":       eval_ds_info.get("dataset_name", ""),
+            "eval_dataset_version_id": eval_ds_info.get("dataset_version_id", ""),
+        })
 
     if env_type == "HC":
         # HC：资源池作为 train_flavor 超参注入 task_parameter.parameters

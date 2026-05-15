@@ -344,23 +344,25 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 `scaffold` 生成的 YAML 模板会列出所有可选顶层字段（按需保留/删除/填值）：
 
 - 基础：`task_name` / `asset_id` / `model_id` / `model_type` / `train_type` / `model_source` / `model_name` / `train_task_desc`
-- 数据集：`dataset_id` / `dataset_name` / `dataset_version_id` / `eval_*` / `dataset_split_ratio`
+- 数据集：`dataset_id` / `dataset_name` / `dataset_version_id` / `eval_*` / `dataset_split_ratio`（`1~50`，来自训练集自动拆分）
 - 断点续训：`checkpoint_id` / `checkpoint_config{save_checkpoints_max, skipped_steps, restore_training, checkpoint_publish_info}`
 - SFS Turbo 加速（HCS）：`sfs_config{model_sfs_enable, dataset_sfs_enable, dataset_preload}`
 - 量化场景：`output_artifact_name` / `quantization_type`
 - 强化学习：`reward_model_id`（接口当前注明"不支持"，保留占位）
 - 三方模型环境变量：`task_env`（model_source=third/pangu-third 时使用）
-- 日志：`plog_level` / `is_input_finished`
-- 资源（HCS）：`pool_node_count` / `flavor` / `t_flops` / `resource_config{pool_type, chip_type, pool_id, pool_name, flavor_id, flavor_name, node_count, fp16, t_flops, training_unit}`
+- 日志：`plog_level`（默认 `-1`） / `is_input_finished`（默认 `1`）
+- 资源（HCS）：`pool_node_count`（默认 `1`） / `flavor` / `t_flops` / `resource_config{pool_type, chip_type, pool_id, pool_name, flavor_id, flavor_name, node_count, fp16, t_flops, training_unit}`
 - 训练参数：`task_parameter{parameters[每条带 value], storages, data_requirements}`
 
 > `create` 提交前会递归剔除请求体中所有值为 `null` 的字段（scaffold 留下未填的 `None` 占位不会发到 API），但保留空字符串 / 空对象 / 空数组（用户可能有意保留）。
+>
+> **默认值兜底**（create 时未传则自动补齐）：`train_type` → `SFT` · `model_source` → `pangu` · `plog_level` → `-1` · `is_input_finished` → `1` · `pool_node_count` → `1`（HCS）
 
 #### 资源池注入方式（随 env_type 不同）
 
 | env_type | 写入位置 | 关键字段 |
 |---|---|---|
-| **HCS** | 顶层 `resource_config` + `pool_node_count` / `flavor` / `t_flops` | `resource_config.pool_id` / `pool_type` / `chip_type` / `flavor_id` |
+| **HCS** | 顶层 `resource_config` + `pool_node_count` / `flavor` / `t_flops` | `resource_config.pool_id` / `pool_type` / `chip_type` / `flavor_id`；**`--nodes` 同步写入 `resource_config.node_count`，`--flavor` 同步写入 `resource_config.fp16`** |
 | **HC**  | `task_parameter.parameters` 中的 `train_flavor` 超参 | `value = {"flavor_id": "<规格>", "pool_id": "<pool-xxx>"}` |
 
 > HC 下 `pangu training model-detail` 返回的 `workflow_info.parameters` 里**已经包含一个 `train_flavor` 项**，但相较其他超参缺少 `default`。创建任务时只需为该项补 `value`（其他字段 description/type/required 保持不变）。资源池来源仍是 `pangu pool list`，与 HCS 一致。
@@ -424,26 +426,27 @@ pangu training create -f train.yaml
 pangu training model-detail \
   --model-id <model_id> --model-type NLP --train-type SFT --model-source SYSTEM
 
-# 命令行覆盖 YAML（HCS 必填: task_name / asset_id / model_type / train_type / model_source / t_flops / task_parameter）
+# 命令行覆盖 YAML（HCS 必填: task_name / asset_id / model_type / model_source / t_flops / task_parameter）
+# train_type 默认 SFT、model_source 默认 pangu、plog_level 默认 -1、is_input_finished 默认 1、pool_node_count 默认 1
 # 同时给齐 --nodes / --flavor-id / --flavor 时 t_flops 会自动推导为 nodes × flavor_id × flavor
-# [HCS] 资源池走顶层 resource_config
+# [HCS] 资源池走顶层 resource_config；--nodes / --flavor 会同步写入 resource_config.node_count / fp16
 pangu training create -f train.yaml \
   --name my-finetune \
   --asset-id <asset_id> \
   --model-id <model_id> \
-  --model-type NLP --train-type SFT --model-source pangu \
+  --model-type NLP --model-source pangu \
   --dataset-id <ds_id> --dataset-name ds-train --dataset-version-id v1 \
   --eval-dataset-id <eval_id> --dataset-split-ratio 10 \
   --pool-id <pool_id> --pool-type private --chip-type Snt9B3 \
   --flavor-id 8 --nodes 1 --flavor 313 \
-  --plog-level 0
+  --sfs-model --sfs-dataset --plog-level 0
 
 # [HC] 资源池作为 train_flavor 超参注入 task_parameter.parameters
 # 必填校验：task_parameter.parameters 中必须有 train_flavor 且 pool_id 非空（不需要 t_flops）
 pangu training create -f train.yaml \
   --name my-finetune \
   --asset-id <asset_id> --model-id <model_id> \
-  --model-type NLP --train-type SFT --model-source pangu \
+  --model-type NLP --model-source pangu \
   --dataset-id <ds_id> --dataset-name ds-train --dataset-version-id v1 \
   --pool-id <pool_id> --train-flavor "1*ascend-snt9b"
 
@@ -451,7 +454,7 @@ pangu training create -f train.yaml \
 pangu training create -f quant.yaml --quantization-type QUANTIZATION-W8A8C --output-artifact-name my-quant
 
 # 断点续训
-pangu training create -f resume.yaml --checkpoint-id <ckpt_uuid>
+pangu training create -f resume.yaml --checkpoint-id <ckpt_uuid> --save-checkpoints-max 3 --restore-training 1
 
 # 创建并等待完成（终态 completed / failed / stopped）
 pangu training create -f examples/training_create.yaml --wait

@@ -562,6 +562,12 @@ def create_task(
     dataset_split_ratio: Optional[int] = typer.Option(None, "--dataset-split-ratio", help="训练/验证数据集分割比率，取值 1~50 (整体范围 0-100)"),
     # 断点续训
     checkpoint_id: Optional[str] = typer.Option(None, "--checkpoint-id", help="断点续训场景的恢复点 UUID (取自查询断点接口)"),
+    save_checkpoints_max: Optional[int] = typer.Option(None, "--save-checkpoints-max", help="断点续训保存数量，>0 开启；0 关闭；-1 无限"),
+    restore_training: Optional[int] = typer.Option(None, "--restore-training", help="0: 重训 / 1: 续训"),
+    # SFS Turbo 加速
+    sfs_model: Optional[bool] = typer.Option(None, "--sfs-model/--no-sfs-model", help="模型 SFS 加速开关"),
+    sfs_dataset: Optional[bool] = typer.Option(None, "--sfs-dataset/--no-sfs-dataset", help="数据集 SFS 加速开关"),
+    sfs_preload: Optional[bool] = typer.Option(None, "--sfs-preload/--no-sfs-preload", help="数据预加载开关"),
     # 资源（HCS 走顶层 resource_config；HC 作为 train_flavor 超参注入 task_parameter）
     pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID — HCS: 写入 resource_config.pool_id (公共池为空，专属池必填)；HC: 写入 task_parameter 中的 train_flavor.value.pool_id (必填)"),
     pool_type: Optional[str] = typer.Option(None, "--pool-type", help="[HCS] 资源池类型: public (公共池) | private (专属池，默认)"),
@@ -613,11 +619,32 @@ def create_task(
     if eval_dataset_version_id:  body["eval_dataset_version_id"] = eval_dataset_version_id
     if dataset_split_ratio is not None: body["dataset_split_ratio"] = dataset_split_ratio
     if checkpoint_id:            body["checkpoint_id"]         = checkpoint_id
+    if save_checkpoints_max is not None:
+        ck = body.setdefault("checkpoint_config", {})
+        ck["save_checkpoints_max"] = save_checkpoints_max
+    if restore_training is not None:
+        ck = body.setdefault("checkpoint_config", {})
+        ck["restore_training"] = restore_training
+    if sfs_model is not None:
+        sf = body.setdefault("sfs_config", {})
+        sf["model_sfs_enable"] = sfs_model
+    if sfs_dataset is not None:
+        sf = body.setdefault("sfs_config", {})
+        sf["dataset_sfs_enable"] = sfs_dataset
+    if sfs_preload is not None:
+        sf = body.setdefault("sfs_config", {})
+        sf["dataset_preload"] = sfs_preload
     if nodes is not None:        body["pool_node_count"]       = nodes
     if flavor is not None:       body["flavor"]                = flavor
     if t_flops is not None:      body["t_flops"]               = t_flops
     if plog_level is not None:   body["plog_level"]            = plog_level
     if is_input_finished is not None: body["is_input_finished"] = is_input_finished
+
+    # Fix 4：dataset_split_ratio 范围校验
+    dsr = body.get("dataset_split_ratio")
+    if dsr is not None and not (1 <= dsr <= 50):
+        console.print("[red]dataset_split_ratio 取值范围 1~50[/red]")
+        raise typer.Exit(1)
 
     if env_type == "HC":
         # HC：把 --pool-id / --train-flavor 注入 task_parameter.parameters 的 train_flavor 项
@@ -644,18 +671,22 @@ def create_task(
                 body.pop(hcs_only, None)
     else:
         # HCS：resource_config 子对象单独合并
-        if any(v is not None for v in (pool_id, pool_type, chip_type, flavor_id)):
-            rc = body.setdefault("resource_config", {})
-            if pool_id:   rc["pool_id"]   = pool_id
-            if pool_type: rc["pool_type"] = pool_type
-            if chip_type: rc["chip_type"] = chip_type
-            if flavor_id: rc["flavor_id"] = flavor_id
+        rc = body.setdefault("resource_config", {})
+        if pool_id:   rc["pool_id"]   = pool_id
+        if pool_type: rc["pool_type"] = pool_type
+        if chip_type: rc["chip_type"] = chip_type
+        if flavor_id: rc["flavor_id"] = flavor_id
+
+        # Fix 1 & 5：同步顶层字段到 resource_config
+        if body.get("pool_node_count") is not None:
+            rc["node_count"] = body["pool_node_count"]
+        if body.get("flavor") is not None:
+            rc["fp16"] = body["flavor"]
 
         # t_flops 自动推导：用户没传 t_flops 但给齐了 nodes / flavor_id / flavor 时，按 PDF 公式（卡数 × flavor）推导
         if body.get("t_flops") in (None, 0):
-            rc_for_calc = body.get("resource_config") or {}
             n  = body.get("pool_node_count")
-            fi = rc_for_calc.get("flavor_id")
+            fi = rc.get("flavor_id")
             fv = body.get("flavor")
             try:
                 n, fi, fv = int(n), int(fi), int(fv)
@@ -664,12 +695,30 @@ def create_task(
             except (TypeError, ValueError):
                 pass  # 缺任一项就不推，留给下面必填校验报错
 
-    # model_source 默认值兜底
+        # Fix 5：同步推导后的 t_flops 到 resource_config
+        if body.get("t_flops") is not None:
+            rc["t_flops"] = body["t_flops"]
+
+    # Fix 2 & 6：train_type / model_source / 其他字段默认值兜底
+    if body.get("train_type") in (None, ""):
+        body["train_type"] = "SFT"
     if body.get("model_source") in (None, ""):
         body["model_source"] = "pangu"
+    if body.get("plog_level") is None:
+        body["plog_level"] = -1
+    if body.get("is_input_finished") is None:
+        body["is_input_finished"] = 1
+    # pool_node_count 默认 1（PDF 默认取值），仅 HCS 环境
+    if env_type != "HC" and body.get("pool_node_count") is None:
+        body["pool_node_count"] = 1
+        rc = body.setdefault("resource_config", {})
+        rc["node_count"] = 1
 
     # 必填校验：HCS 多 t_flops；HC 不需要 t_flops（资源走 task_parameter）
     required = ["asset_id", "task_name", "model_type", "train_type", "model_source", "task_parameter"]
+    # Fix 3：model_id 在 NLP/MM 场景下必填
+    if body.get("model_type") in ("NLP", "MM"):
+        required.append("model_id")
     if env_type != "HC":
         required.append("t_flops")
     for req in required:

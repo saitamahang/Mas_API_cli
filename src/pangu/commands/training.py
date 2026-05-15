@@ -222,7 +222,7 @@ def _build_task_parameter(workflow_info: dict, env_type: str = "HCS", dataset_ob
     params = [_paramdef_to_runtime(p) for p in (wi.get("parameters") or [])]
 
     data_reqs = wi.get("data_requirements") or []
-    if env_type == "HC":
+    if env_type in ("HC", "HCS"):
         enriched = []
         for dr in data_reqs:
             if isinstance(dr, dict):
@@ -376,9 +376,9 @@ def scaffold(
     eval_ds_info = _fetch_dataset_info(client, eval_dataset_name, eval_dataset_catalog, workspace) if eval_dataset_name else {}
     pool_info = _fetch_pool_info(client, pool_id, env_type, workspace) if pool_id else {}
 
-    # HC 环境下：从数据集详情提取 OBS 路径用于填充 data_requirements
+    # HCS / HC 环境下：从数据集详情提取 OBS 路径用于填充 data_requirements
     dataset_obs_url = None
-    if env_type == "HC" and ds_info.get("dataset_name"):
+    if ds_info.get("dataset_name"):
         try:
             ds_detail = client.get(
                 "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/{dataset_name}",
@@ -387,13 +387,9 @@ def scaffold(
                 dataset_name=ds_info["dataset_name"],
             )
             sample_path = ds_detail.get("sample_path", "")
-            # 去掉 obs:// 或 obs: 前缀，确保保留一个前导 /
-            if sample_path.startswith("obs://"):
-                sample_path = sample_path[6:]
-            elif sample_path.startswith("obs:"):
-                sample_path = sample_path[4:]
-            if not sample_path.startswith("/"):
-                sample_path = "/" + sample_path
+            # 原始格式固定为 obs://xxx/xxxx/xxx，去掉 obs:/ 后保留 /xxx/xxxx/xxx
+            if sample_path.startswith("obs:/"):
+                sample_path = sample_path[5:]
             sample_path = sample_path.rstrip("/") + "/data.manifest"
             dataset_obs_url = sample_path or None
             if dataset_obs_url:

@@ -489,7 +489,8 @@ def scaffold(
         common_top["pool_node_count"] = 2 if training_unit == 16 else 1
 
         # 如传了 --pool-id 且查询成功，填充真实资源池信息
-        tf_flavor = pool_info.get("flavor_id") or "TODO-flavor_id 字符串，例 1*ascend-snt9b（参考 model-detail 中 train_flavor 的取值范围）"
+        # TODO: 调试完成后恢复为 pool_info.get("flavor_id") or "TODO-..."
+        tf_flavor = "modelarts.pool.visual.xlarge"
         tf_pool   = pool_info.get("pool_id") or "TODO-pangu pool list 获取 pool-xxxxx"
         common_top["task_parameter"]["parameters"] = _inject_train_flavor(parameters, flavor_id=tf_flavor, pool_id=tf_pool)
         skeleton = common_top
@@ -498,7 +499,8 @@ def scaffold(
         # 如传了 --pool-id 且查询成功，填充真实资源池信息
         pool_id_val   = pool_info.get("pool_id", "") or "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)"
         chip_type_val = pool_info.get("chip_type", "") or "TODO-如 Snt9B3 / Snt9B4"
-        flavor_id_val = pool_info.get("flavor_id", "") or "TODO-专属池取 1|2|4|8"
+        # TODO: 调试完成后恢复为 pool_info.get("flavor_id", "") or "TODO-..."
+        flavor_id_val = "modelarts.pool.visual.xlarge"
         common_top.update({
             "pool_node_count": 1,
             "flavor":          313,

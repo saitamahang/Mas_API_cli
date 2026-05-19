@@ -348,7 +348,8 @@ def scaffold(
     dataset_catalog: str = typer.Option("ORIGINAL", "--dataset-catalog", help="数据集类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     eval_dataset_name: Optional[str] = typer.Option(None, "--eval-dataset-name", help="验证数据集名称，自动查询 eval_dataset_id 等并填充模板"),
     eval_dataset_catalog: str = typer.Option("ORIGINAL", "--eval-dataset-catalog", help="验证数据集类别: ORIGINAL | PROCESS | PUBLISH"),
-    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID，自动查询 flavor_id / chip_type 等资源信息并填充模板"),
+    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID，HCS 下直接写入模板"),
+    chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下直接写入模板"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -374,7 +375,10 @@ def scaffold(
     # scaffold 内部查询：数据集 / 验证集 / 资源池 信息
     ds_info = _fetch_dataset_info(client, dataset_name, dataset_catalog, workspace) if dataset_name else {}
     eval_ds_info = _fetch_dataset_info(client, eval_dataset_name, eval_dataset_catalog, workspace) if eval_dataset_name else {}
-    pool_info = _fetch_pool_info(client, pool_id, env_type, workspace) if pool_id else {}
+    # HCS 下不走查询资源池逻辑，直接写入 pool_id / flavor_id；HC 仍需查询
+    pool_info = {}
+    if env_type == "HC" and pool_id:
+        pool_info = _fetch_pool_info(client, pool_id, env_type, workspace)
 
     # HCS / HC 环境下：从数据集详情提取 OBS 路径用于填充 data_requirements
     dataset_obs_url = None
@@ -496,9 +500,9 @@ def scaffold(
         skeleton = common_top
     else:
         # HCS：资源池走顶层 resource_config + pool_node_count / flavor / t_flops
-        # 如传了 --pool-id 且查询成功，填充真实资源池信息
-        pool_id_val   = pool_info.get("pool_id", "") or "TODO-pangu pool list 获取 (专属池必填，公共池留空字符串)"
-        chip_type_val = pool_info.get("chip_type", "") or "TODO-如 Snt9B3 / Snt9B4"
+        # HCS 下不走查询资源池逻辑，直接写入 pool_id / flavor_id / chip_type
+        pool_id_val   = pool_id or "TODO-pangu pool list 获取 pool-xxxxx (专属池必填，公共池留空字符串)"
+        chip_type_val = chip_type or "TODO-如 Snt9B3 / Snt9B4"
         # TODO: 调试完成后恢复为 pool_info.get("flavor_id", "") or "TODO-..."
         flavor_id_val = "modelarts.pool.visual.xlarge"
         common_top.update({
@@ -510,7 +514,7 @@ def scaffold(
                 "pool_type":       "private",                    # public | private（默认 private）
                 "chip_type":       chip_type_val,
                 "pool_id":         pool_id_val,
-                "pool_name":       pool_info.get("pool_name", ""),
+                "pool_name":       "",
                 "flavor_id":       flavor_id_val,
                 "flavor_name":     "",
                 "node_count":      1,    # flavor_id=8 且 >1 即多机多卡

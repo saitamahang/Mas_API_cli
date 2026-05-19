@@ -407,18 +407,20 @@ pangu training get <task_id>
 # scaffold 写入 YAML 时按 SYSTEM→pangu / USER→third 自动映射；如属于"盘古预置三方模型"显式 --create-model-source pangu-third
 pangu training scaffold \
   --model-id <model_id> --model-type NLP --train-type SFT --model-source SYSTEM \
-  --asset-id <asset_id> \
+  --asset-id <asset_id> --cards 1 \
   --out train.yaml
 
 # HCS 下 scaffold 支持直接传入资源池信息（不走查询，直接写入模板）
+# --cards 决定 flavor_id（1=xlarge, 2=2xlarge, 4=4xlarge, 8=8xlarge）
+# --nodes 仅在 8 卡时允许 >1（多机多卡）
 pangu training scaffold \
   --model-id <model_id> --model-type NLP --train-type SFT --model-source SYSTEM \
-  --pool-id <pool_id> --chip-type Snt9B3 \
+  --pool-id <pool_id> --chip-type Snt9B3 --cards 8 --nodes 2 \
   --out train.yaml
 
 # 编辑 train.yaml 里的 TODO 字段：
-#   HCS：task_name / resource_config.pool_id / chip_type / flavor_id / t_flops（或给齐 nodes+flavor+flavor_id 自动推导）
-#        scaffold 已传 --pool-id / --chip-type 时，对应字段已填入，只需补 task_name / t_flops
+#   HCS：task_name / resource_config.pool_id / chip_type（flavor_id / pool_node_count / t_flops 已由 --cards/--nodes 自动推导）
+#        scaffold 已传 --pool-id / --chip-type 时，对应字段已填入，只需补 task_name
 #   HC ：task_name / task_parameter.parameters[train_flavor].value.{flavor,pool_id}
 
 # 预检请求体（不会发送，skill 调试首选）

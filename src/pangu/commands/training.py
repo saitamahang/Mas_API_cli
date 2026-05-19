@@ -350,6 +350,8 @@ def scaffold(
     eval_dataset_catalog: str = typer.Option("ORIGINAL", "--eval-dataset-catalog", help="验证数据集类别: ORIGINAL | PROCESS | PUBLISH"),
     pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID，HCS 下直接写入模板"),
     chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下直接写入模板"),
+    cards: int = typer.Option(1, "--cards", help="单节点卡数：1|2|4|8，决定 flavor_id"),
+    nodes: int = typer.Option(1, "--nodes", help="节点数，默认 1；仅在 8 卡时允许 >1"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -367,6 +369,17 @@ def scaffold(
         detail_body["strategy"] = strategy
 
     env_type = (client.config.env_type or "HCS").upper()
+
+    # 卡数校验 & flavor_id 映射
+    if cards not in (1, 2, 4, 8):
+        console.print("[red]--cards 只支持 1|2|4|8[/red]")
+        raise typer.Exit(1)
+    if nodes > 1 and cards != 8:
+        console.print("[yellow]非 8 卡不支持多节点，nodes 强制设为 1[/yellow]")
+        nodes = 1
+    _CARD_TO_FLAVOR = {1: "xlarge", 2: "2xlarge", 4: "4xlarge", 8: "8xlarge"}
+    flavor_id = f"modelarts.pool.visual.{_CARD_TO_FLAVOR[cards]}"
+
     if env_type == "HC":
         detail = client.get(MODEL_DETAIL_PATH, workspace_id=workspace, params=detail_body)
     else:
@@ -493,8 +506,7 @@ def scaffold(
         common_top["pool_node_count"] = 2 if training_unit == 16 else 1
 
         # 如传了 --pool-id 且查询成功，填充真实资源池信息
-        # TODO: 调试完成后恢复为 pool_info.get("flavor_id") or "TODO-..."
-        tf_flavor = "modelarts.pool.visual.xlarge"
+        tf_flavor = flavor_id
         tf_pool   = pool_info.get("pool_id") or "TODO-pangu pool list 获取 pool-xxxxx"
         common_top["task_parameter"]["parameters"] = _inject_train_flavor(parameters, flavor_id=tf_flavor, pool_id=tf_pool)
         skeleton = common_top
@@ -503,12 +515,13 @@ def scaffold(
         # HCS 下不走查询资源池逻辑，直接写入 pool_id / flavor_id / chip_type
         pool_id_val   = pool_id or "TODO-pangu pool list 获取 pool-xxxxx (专属池必填，公共池留空字符串)"
         chip_type_val = chip_type or "TODO-如 Snt9B3 / Snt9B4"
-        # TODO: 调试完成后恢复为 pool_info.get("flavor_id", "") or "TODO-..."
-        flavor_id_val = "modelarts.pool.visual.xlarge"
+        flavor_id_val = flavor_id
+        pool_node_count_val = nodes
+        t_flops_val = cards * pool_node_count_val * 313
         common_top.update({
-            "pool_node_count": 1,
+            "pool_node_count": pool_node_count_val,
             "flavor":          313,
-            "t_flops":         "TODO-卡数 × flavor，或在 create 时给齐 --nodes/--flavor-id/--flavor 自动推导",
+            "t_flops":         t_flops_val,
             # PDF §3.13.5 ResourceConfig 全字段；非必填项保留占位让用户按需取舍
             "resource_config": {
                 "pool_type":       "private",                    # public | private（默认 private）
@@ -517,7 +530,7 @@ def scaffold(
                 "pool_name":       "",
                 "flavor_id":       flavor_id_val,
                 "flavor_name":     "",
-                "node_count":      1,    # flavor_id=8 且 >1 即多机多卡
+                "node_count":      pool_node_count_val,    # flavor_id=8 且 >1 即多机多卡
                 "fp16":            None, # 313 / 280 等
                 "t_flops":         None, # ResourceConfig 内的 t_flops（Double）
                 "training_unit":   None, # 训练单元

@@ -460,9 +460,9 @@ def scaffold(
             "dataset_sfs_enable": False,
             "dataset_preload":    False,
         },
-        # 量化场景（可选）
-        "output_artifact_name":   "",
-        "quantization_type":      "",
+        # 量化场景（可选，当前未启用）
+        # "output_artifact_name":   "",
+        # "quantization_type":      "",
         # 强化学习 RLHF 场景（当前接口注明"不支持"，保留占位说明）
         "reward_model_id":        "",
         # 日志
@@ -556,8 +556,8 @@ def create_task(
     train_type: Optional[str] = typer.Option(None, "--train-type", help="(必填，默认 SFT) " + HELP_TRAIN_TYPE),
     model_source: Optional[str] = typer.Option(None, "--model-source", help=HELP_MODEL_SRC + "；默认 pangu"),
     model_name: Optional[str] = typer.Option(None, "--model-name", help="模型名称 (可选)"),
-    output_artifact_name: Optional[str] = typer.Option(None, "--output-artifact-name", help="任务输出产物名称 (量化场景使用)"),
-    quantization_type: Optional[str] = typer.Option(None, "--quantization-type", help="量化算法类型，例如 QUANTIZATION-W8A8C"),
+    # output_artifact_name: Optional[str] = typer.Option(None, "--output-artifact-name", help="任务输出产物名称 (量化场景使用)"),
+    # quantization_type: Optional[str] = typer.Option(None, "--quantization-type", help="量化算法类型，例如 QUANTIZATION-W8A8C"),
     # 数据集
     dataset_id: Optional[str] = typer.Option(None, "--dataset-id", help="训练数据集 ID (取自查询数据集详情 v1)"),
     dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="训练数据集名称 (取自查询数据集详情 v1 的 name)"),
@@ -615,8 +615,8 @@ def create_task(
     if train_type:               body["train_type"]            = train_type
     if model_source is not None: body["model_source"]          = model_source
     if model_name:               body["model_name"]            = model_name
-    if output_artifact_name:     body["output_artifact_name"]  = output_artifact_name
-    if quantization_type:        body["quantization_type"]     = quantization_type
+    # if output_artifact_name:     body["output_artifact_name"]  = output_artifact_name
+    # if quantization_type:        body["quantization_type"]     = quantization_type
     if dataset_id:               body["dataset_id"]            = dataset_id
     if dataset_name:             body["dataset_name"]          = dataset_name
     if dataset_version_id:       body["dataset_version_id"]    = dataset_version_id

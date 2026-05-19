@@ -347,7 +347,6 @@ pangu service usage <service_id> --start-time 2024-01-01T00:00:00 --end-time 202
 - 数据集：`dataset_id` / `dataset_name` / `dataset_version_id` / `eval_*` / `dataset_split_ratio`（`1~50`，来自训练集自动拆分）
 - 断点续训：`checkpoint_id` / `checkpoint_config{save_checkpoints_max, skipped_steps, restore_training, checkpoint_publish_info}`
 - SFS Turbo 加速（HCS）：`sfs_config{model_sfs_enable, dataset_sfs_enable, dataset_preload}`
-- 量化场景：`output_artifact_name` / `quantization_type`
 - 强化学习：`reward_model_id`（接口当前注明"不支持"，保留占位）
 - 三方模型环境变量：`task_env`（model_source=third/pangu-third 时使用）
 - 日志：`plog_level`（默认 `-1`） / `is_input_finished`（默认 `1`）
@@ -456,9 +455,6 @@ pangu training create -f train.yaml \
   --model-type NLP --model-source pangu \
   --dataset-id <ds_id> --dataset-name ds-train --dataset-version-id v1 \
   --pool-id <pool_id> --train-flavor "1*ascend-snt9b"
-
-# 量化训练
-pangu training create -f quant.yaml --quantization-type QUANTIZATION-W8A8C --output-artifact-name my-quant
 
 # 断点续训
 pangu training create -f resume.yaml --checkpoint-id <ckpt_uuid> --save-checkpoints-max 3 --restore-training 1

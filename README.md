@@ -411,8 +411,15 @@ pangu training scaffold \
   --asset-id <asset_id> \
   --out train.yaml
 
+# HCS 下 scaffold 支持直接传入资源池信息（不走查询，直接写入模板）
+pangu training scaffold \
+  --model-id <model_id> --model-type NLP --train-type SFT --model-source SYSTEM \
+  --pool-id <pool_id> --chip-type Snt9B3 \
+  --out train.yaml
+
 # 编辑 train.yaml 里的 TODO 字段：
 #   HCS：task_name / resource_config.pool_id / chip_type / flavor_id / t_flops（或给齐 nodes+flavor+flavor_id 自动推导）
+#        scaffold 已传 --pool-id / --chip-type 时，对应字段已填入，只需补 task_name / t_flops
 #   HC ：task_name / task_parameter.parameters[train_flavor].value.{flavor,pool_id}
 
 # 预检请求体（不会发送，skill 调试首选）

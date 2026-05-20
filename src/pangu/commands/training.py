@@ -536,6 +536,10 @@ def scaffold(
                 "training_unit":   None, # 训练单元
             },
         })
+        # HCS 下也同步覆盖 task_parameter.parameters 中的 train_flavor，与 HC 保持一致
+        common_top["task_parameter"]["parameters"] = _inject_train_flavor(
+            parameters, flavor_id=flavor_id_val, pool_id=pool_id_val
+        )
         skeleton = common_top
 
     text = yaml.safe_dump(skeleton, allow_unicode=True, sort_keys=False)

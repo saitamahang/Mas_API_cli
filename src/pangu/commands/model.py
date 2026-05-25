@@ -82,6 +82,18 @@ LIST_EXT_COLUMNS = [
     ("can_deploy",     "可部署"),
 ]
 
+SIMPLE_COLUMNS = [
+    ("asset_id",      "资产 ID"),
+    ("asset_name",    "名称"),
+    ("asset_version", "版本"),
+    ("asset_tag",     "标签"),
+    ("asset_type",    "类型"),
+    ("asset_source",  "来源"),
+    ("can_train",     "可训练"),
+    ("can_deploy",    "可部署"),
+    ("model_id",      "模型 ID"),
+]
+
 DETAIL_FIELDS = [
     ("asset_id",             "资产 ID"),
     ("root_asset_id",        "来源预置资产 ID"),
@@ -141,6 +153,7 @@ def list_models(
     workspace_source: Optional[str] = typer.Option(None, "--workspace-source", help=HELP_WORKSPACE_SOURCE),
     category: Optional[str]     = typer.Option(None, "--category", help=HELP_CATEGORY_V1),
     is_op_user: Optional[bool]  = typer.Option(None, "--op-user/--no-op-user", help="是否承载租户 (1/0)；传 user_id 时必须 --no-op-user"),
+    simple: bool = typer.Option(False, "--simple", help="简洁模式，只显示核心字段"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式 table|json|yaml|id"),
 ):
     """查询指定空间内的模型资产列表 (3.12.1)
@@ -174,7 +187,8 @@ def list_models(
                 flat.append(elem)
     elif isinstance(data, dict):
         flat = [data]
-    output(flat, fmt=fmt, columns=LIST_COLUMNS, title="模型资产", id_key="asset_id")
+    columns = SIMPLE_COLUMNS if simple else LIST_COLUMNS
+    output(flat, fmt=fmt, columns=columns, title="模型资产", id_key="asset_id")
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +242,7 @@ def list_ext(
     asset_feature: Optional[str] = typer.Option(None, "--feature", help=HELP_ASSET_FEATURE),
     sort: Optional[str]         = typer.Option(None, "--sort", help=HELP_SORT),
     asset_action: Optional[str] = typer.Option(None, "--asset-action", help=HELP_ASSET_ACTION),
+    simple: bool = typer.Option(False, "--simple", help="简洁模式，只显示核心字段"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式 table|json|yaml|id"),
 ):
     """获取模型列表（含 can_deploy/can_train/is_used 等能力标识, 3.12.3）
@@ -274,8 +289,9 @@ def list_ext(
         output(data, fmt=fmt)
         return
 
+    columns = SIMPLE_COLUMNS if simple else LIST_EXT_COLUMNS
     title = f"模型资产 (完整)  total={data.get('total')}" if isinstance(data, dict) else "模型资产 (完整)"
-    output(flat_assets, fmt=fmt, columns=LIST_EXT_COLUMNS, title=title, id_key="asset_id")
+    output(flat_assets, fmt=fmt, columns=columns, title=title, id_key="asset_id")
 
 
 # ---------------------------------------------------------------------------

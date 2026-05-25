@@ -352,6 +352,7 @@ def scaffold(
     chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下直接写入模板"),
     cards: int = typer.Option(1, "--cards", help="单节点卡数：1|2|4|8，决定 flavor_id"),
     nodes: int = typer.Option(1, "--nodes", help="节点数，默认 1；仅在 8 卡时允许 >1"),
+    auto_publish: bool = typer.Option(True, "--auto-publish/--no-auto-publish", help="训练完成后自动发布为模型版本，默认开启"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -478,7 +479,7 @@ def scaffold(
         # "quantization_type":      "",
         # 自动发布配置（可选，训练完成后自动发布为模型版本）
         "auto_publish_config": {
-            "is_auto_publish": True,
+            "is_auto_publish": auto_publish,
         },
         # 强化学习 RLHF 场景（当前接口注明"不支持"，保留占位说明）
         "reward_model_id":        "",

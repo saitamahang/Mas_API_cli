@@ -73,6 +73,8 @@ def _build_deploy_body(
     config: Optional[str] = None,
     name: Optional[str] = None,
     asset_id: Optional[str] = None,
+    asset_ids: Optional[list[str]] = None,
+    asset_tag: Optional[str] = None,
     asset_type: Optional[str] = None,
     arch: Optional[str] = None,
     infer_type: Optional[str] = None,
@@ -86,6 +88,10 @@ def _build_deploy_body(
     scene: Optional[str] = None,
     security_bar_type: Optional[str] = None,
     security_bar_edition: Optional[str] = None,
+    deployed_model: Optional[str] = None,
+    task_config: Optional[str] = None,
+    input_types: Optional[list[str]] = None,
+    output_types: Optional[list[str]] = None,
     desc: Optional[str] = None,
 ) -> dict:
     """构建部署请求体：YAML 配置 + 命令行参数合并，命令行优先"""
@@ -98,6 +104,7 @@ def _build_deploy_body(
         "service_name": name,
         "service_desc": desc,
         "asset_id": asset_id,
+        "asset_tag": asset_tag,
         "asset_type": asset_type,
         "arch": arch,
         "infer_type": infer_type,
@@ -109,10 +116,19 @@ def _build_deploy_body(
         "security_bar_type": security_bar_type,
         "security_bar_edition": security_bar_edition,
         "elb_id": elb_id,
+        "deployed_model": deployed_model,
+        "task_config": task_config,
     }
     for k, v in overrides.items():
         if v is not None:
             body[k] = v
+
+    if asset_ids is not None:
+        body["asset_ids"] = asset_ids
+    if input_types is not None:
+        body["input_types"] = input_types
+    if output_types is not None:
+        body["output_types"] = output_types
 
     # service_config 处理
     if "service_config" not in body:
@@ -120,14 +136,17 @@ def _build_deploy_body(
     if instances is not None:
         body["service_config"]["instance_count"] = instances
     if pool_id is not None:
-        body["service_config"]["specification"] = "custom"
-        if "custom_spec" not in body["service_config"]:
-            body["service_config"]["custom_spec"] = {}
-        body["service_config"]["custom_spec"]["resource_pool_id"] = pool_id
+        body["service_config"]["cluster_id"] = pool_id
 
-    # model_config 默认值
+    # model_config 处理
     if "model_config" not in body:
         body["model_config"] = {}
+    if task_config is not None:
+        body["model_config"]["task_config"] = task_config
+    if input_types is not None:
+        body["model_config"]["input_types"] = input_types
+    if output_types is not None:
+        body["model_config"]["output_types"] = output_types
 
     # infer_type 默认值
     if "infer_type" not in body:
@@ -186,7 +205,7 @@ def list_services(
     services = data.get("services", [])
     for svc in services:
         assets = svc.get("assets", [])
-        if assets and "asset_type" not in svc:
+        if assets and isinstance(assets[0], dict) and "asset_type" not in svc:
             svc["asset_type"] = assets[0].get("asset_type", "")
 
     output(
@@ -212,7 +231,7 @@ def get_service(
 
     # 展平 asset_type
     assets = data.get("assets", [])
-    if assets and "asset_type" not in data:
+    if assets and isinstance(assets[0], dict) and "asset_type" not in data:
         data["asset_type"] = assets[0].get("asset_type", "")
 
     output(
@@ -229,20 +248,26 @@ def deploy_service(
     config: Optional[str] = typer.Option(None, "--config", "-c", help="YAML 配置文件路径"),
     name: Optional[str] = typer.Option(None, "--name", help="服务名称"),
     desc: Optional[str] = typer.Option(None, "--desc", help="服务描述"),
-    asset_id: Optional[str] = typer.Option(None, "--asset-id", help="模型资产 ID"),
+    asset_id: Optional[str] = typer.Option(None, "--asset-id", help="模型资产 ID (单资产部署，与 --asset-ids 二选一)"),
+    asset_ids: Optional[list[str]] = typer.Option(None, "--asset-ids", help="多资产部署 ID 列表 (与 --asset-id 二选一)"),
+    asset_tag: Optional[str] = typer.Option(None, "--asset-tag", help="资产标签，量化模型必填"),
     asset_type: Optional[str] = typer.Option(None, "--asset-type", help="模型类型: NLP/CV/MM/Predict/AI4Science/Profession"),
     arch: Optional[str] = typer.Option(None, "--arch", help="架构: ARM/X86"),
     infer_type: Optional[str] = typer.Option(None, "--infer-type", help="部署类型: online/edge"),
     device_type: Optional[str] = typer.Option(None, "--device-type", help="设备: NPU/GPU/NONE"),
     chip_type: Optional[str] = typer.Option(None, "--chip-type", help="芯片类型"),
     request_mode: Optional[str] = typer.Option(None, "--request-mode", help="请求模式: sync/async"),
-    category: Optional[str] = typer.Option(None, "--category", help="来源: pangu/3rd"),
-    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID"),
+    category: Optional[str] = typer.Option(None, "--category", help="来源: pangu/3rd/pangu-poc/pangu-iit/3rd-pangu"),
+    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID (在线/边缘资源池 ID，对应 service_config.cluster_id)"),
     instances: Optional[int] = typer.Option(None, "--instances", "-n", help="实例数 (1-128)"),
     elb_id: Optional[str] = typer.Option(None, "--elb-id", help="负载均衡 ID (边缘部署)"),
-    scene: Optional[str] = typer.Option(None, "--scene", help="场景: Weather/Precip/Ocean/..."),
-    security_bar_type: Optional[str] = typer.Option(None, "--security-bar", help="安全护栏: ENABLE/DISABLE"),
+    scene: Optional[str] = typer.Option(None, "--scene", help="场景: Weather/Precip/Ocean/Ocean_Regional/Ocean_Ecology/Ocean_Swell/Pollution"),
+    security_bar_type: Optional[str] = typer.Option(None, "--security-bar", help="安全护栏: ENABLE/DISABLE/NOT_SUPPORT"),
     security_bar_edition: Optional[str] = typer.Option(None, "--security-bar-edition", help="护栏版本: BASE/ADVANCED"),
+    deployed_model: Optional[str] = typer.Option(None, "--deployed-model", help="模型部署唯一标识，长度 ≤64"),
+    task_config: Optional[str] = typer.Option(None, "--task-config", help="异步模型作业配置参数 (XML 格式字符串)"),
+    input_types: Optional[list[str]] = typer.Option(None, "--input-type", help="异步模型输入数据类型 (可多次传入，如 OBS)"),
+    output_types: Optional[list[str]] = typer.Option(None, "--output-type", help="异步模型输出数据类型 (可多次传入，如 OBS)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待部署完成"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
@@ -254,18 +279,35 @@ def deploy_service(
 
     body = _build_deploy_body(
         config=config, name=name, desc=desc, asset_id=asset_id,
-        asset_type=asset_type, arch=arch, infer_type=infer_type,
-        device_type=device_type, chip_type=chip_type, request_mode=request_mode,
-        category=category, pool_id=pool_id, instances=instances,
-        elb_id=elb_id, scene=scene, security_bar_type=security_bar_type,
-        security_bar_edition=security_bar_edition,
+        asset_ids=asset_ids, asset_tag=asset_tag, asset_type=asset_type,
+        arch=arch, infer_type=infer_type, device_type=device_type,
+        chip_type=chip_type, request_mode=request_mode, category=category,
+        pool_id=pool_id, instances=instances, elb_id=elb_id, scene=scene,
+        security_bar_type=security_bar_type, security_bar_edition=security_bar_edition,
+        deployed_model=deployed_model, task_config=task_config,
+        input_types=input_types, output_types=output_types,
     )
 
-    # 必填参数校验
-    required = ["service_name", "asset_id", "arch", "infer_type"]
+    # 必填参数校验（对照 PDF §3.14.4）
+    required = ["service_name", "arch", "infer_type"]
     missing = [k for k in required if not body.get(k)]
     if missing:
         console.print(f"[red]缺少必填参数: {', '.join(missing)}[/red]")
+        raise typer.Exit(1)
+
+    # asset_id / asset_ids 二选一
+    has_asset = bool(body.get("asset_id")) or bool(body.get("asset_ids"))
+    if not has_asset:
+        console.print("[red]缺少资产参数: --asset-id 或 --asset-ids 至少提供一个[/red]")
+        raise typer.Exit(1)
+
+    # service_config 必填子字段
+    svc_cfg = body.get("service_config", {})
+    if not svc_cfg.get("instance_count"):
+        console.print("[red]service_config.instance_count (实例数) 必填[/red]")
+        raise typer.Exit(1)
+    if not svc_cfg.get("cluster_id"):
+        console.print("[red]service_config.cluster_id (资源池 ID) 必填，请通过 --pool-id 或 YAML 配置提供[/red]")
         raise typer.Exit(1)
 
     client = PanguClient()
@@ -276,14 +318,19 @@ def deploy_service(
 
     if wait and service_id:
         console.print("等待部署完成...")
-        result = client.wait_for_status(
-            poll_fn=lambda: client.get(DETAIL_PATH, workspace_id=workspace, service_id=service_id),
-            target_statuses={"running"},
-            failure_statuses={"failed"},
-            interval=15,
-            timeout=3600,
-        )
-        data = result
+        try:
+            data = client.wait_for_status(
+                DETAIL_PATH,
+                target_statuses=["running"],
+                failure_statuses=["failed"],
+                interval=15,
+                timeout=3600,
+                workspace_id=workspace,
+                service_id=service_id,
+            )
+        except (RuntimeError, TimeoutError) as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
 
     output(
         data,
@@ -321,13 +368,19 @@ def update_service(
 
     if wait:
         console.print("等待更新完成...")
-        result = client.wait_for_status(
-            poll_fn=lambda: client.get(DETAIL_PATH, workspace_id=workspace, service_id=service_id),
-            target_statuses={"running"},
-            failure_statuses={"failed"},
-            interval=15,
-        )
-        data = result
+        try:
+            data = client.wait_for_status(
+                DETAIL_PATH,
+                target_statuses=["running"],
+                failure_statuses=["failed"],
+                interval=15,
+                timeout=3600,
+                workspace_id=workspace,
+                service_id=service_id,
+            )
+        except (RuntimeError, TimeoutError) as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
 
     output(data, fmt=fmt, detail_fields=DETAIL_FIELDS, title="服务更新", status_key="status")
 
@@ -368,13 +421,19 @@ def start_service(
     console.print(f"[green]服务 {service_id} 启动中...[/green]")
 
     if wait:
-        result = client.wait_for_status(
-            poll_fn=lambda: client.get(DETAIL_PATH, workspace_id=workspace, service_id=service_id),
-            target_statuses={"running"},
-            failure_statuses={"failed"},
-            interval=10,
-        )
-        data = result
+        try:
+            data = client.wait_for_status(
+                DETAIL_PATH,
+                target_statuses=["running"],
+                failure_statuses=["failed"],
+                interval=10,
+                timeout=3600,
+                workspace_id=workspace,
+                service_id=service_id,
+            )
+        except (RuntimeError, TimeoutError) as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
 
     output(data, fmt=fmt, detail_fields=DETAIL_FIELDS, title="服务启动", status_key="status")
 
@@ -407,12 +466,29 @@ def stop_service(
 @app.command("logs")
 def service_logs(
     service_id: str = typer.Argument(help="服务 ID"),
+    start_time: int = typer.Argument(help="开始时间 (毫秒时间戳)"),
+    end_time: int = typer.Argument(help="结束时间 (毫秒时间戳)"),
+    log_type: str = typer.Argument(help="查询类型: init(首次)/next(向下分页)/pre(向上分页)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    keyword: Optional[str] = typer.Option(None, "--keyword", help="关键词搜索"),
+    line_num: Optional[int] = typer.Option(None, "--line-num", help="日志单行序列号 (分页查询时用)"),
+    size: int = typer.Option(100, "--size", "-s", help="查询行数 (1-500)，默认 100"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
     """查看服务运行日志"""
+    body = {
+        "start_time": start_time,
+        "end_time": end_time,
+        "type": log_type,
+        "size": size,
+    }
+    if keyword:
+        body["keyword"] = keyword
+    if line_num is not None:
+        body["line_num"] = line_num
+
     client = PanguClient()
-    data = client.post(RUNLOG_PATH, workspace_id=workspace, json={}, service_id=service_id)
+    data = client.post(RUNLOG_PATH, workspace_id=workspace, json=body, service_id=service_id)
     output(data, fmt=fmt)
 
 
@@ -420,15 +496,32 @@ def service_logs(
 def service_node_logs(
     service_id: str = typer.Argument(help="服务 ID"),
     node_id: str = typer.Argument(help="节点 ID"),
+    start_time: int = typer.Argument(help="开始时间 (毫秒时间戳)"),
+    end_time: int = typer.Argument(help="结束时间 (毫秒时间戳)"),
+    log_type: str = typer.Argument(help="查询类型: init(首次)/next(向下分页)/pre(向上分页)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    keyword: Optional[str] = typer.Option(None, "--keyword", help="关键词搜索"),
+    line_num: Optional[int] = typer.Option(None, "--line-num", help="日志单行序列号 (分页查询时用)"),
+    size: int = typer.Option(100, "--size", "-s", help="查询行数 (1-500)，默认 100"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
     """查看指定节点运行日志"""
+    body = {
+        "start_time": start_time,
+        "end_time": end_time,
+        "type": log_type,
+        "size": size,
+    }
+    if keyword:
+        body["keyword"] = keyword
+    if line_num is not None:
+        body["line_num"] = line_num
+
     client = PanguClient()
     data = client.post(
         NODE_RUNLOG_PATH,
         workspace_id=workspace,
-        json={},
+        json=body,
         service_id=service_id,
         model_node_id=node_id,
     )

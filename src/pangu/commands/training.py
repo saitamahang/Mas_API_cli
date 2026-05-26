@@ -446,7 +446,6 @@ def scaffold(
         "_generated_by":          "scaffold",  # 内部标记，create 成功后自动清理配置文件
         "task_name":              "TODO-请填写任务名称（中文/字母/数字/中划线/下划线，不以数字开头，≤64）",
         "asset_id":               suggested_asset_id,
-        "model_id":               model_id,
         "model_type":             model_type,
         "train_type":             train_type,
         "model_source":           body_model_source,
@@ -457,10 +456,8 @@ def scaffold(
         "dataset_version_id":     ds_info.get("dataset_version_id", ""),
         "dataset_split_ratio":    None,  # 1~50；不需要可删除
         # 断点续训（可选）
-        "checkpoint_id":          "",
         "checkpoint_config": {
-            # PDF §3.13.5 CheckpointConfig，需要时取消注释/补值；不需要保留 {} 即可
-            # "save_checkpoints_max":  0,   # >0 开启断点续训并保存指定数量；0 关闭，-1 无限
+            "save_checkpoints_max": 5,   # >0 开启断点续训并保存指定数量；0 关闭，-1 无限
             # "skipped_steps":         0,   # 续训时跳过的步数
             # "restore_training":      0,   # 0 重训 / 1 续训
             # "checkpoint_publish_info": {  # 断点发布

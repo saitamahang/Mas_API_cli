@@ -342,6 +342,7 @@ def scaffold(
     create_model_source: Optional[str] = typer.Option(None, "--create-model-source", help="写入 YAML 的 create 接口 model_source [可选] " + HELP_MODEL_SRC + "；不传则按 SYSTEM→pangu / USER→third 自动映射"),
     strategy: Optional[str] = typer.Option(None, "--strategy", help="策略 (可选)"),
     asset_id: Optional[str] = typer.Option(None, "--asset-id", help="已知的 asset_id，直接填入模板；不传则留 TODO 占位"),
+    model_name: Optional[str] = typer.Option(None, "--model-name", help="模型名称 (可选)；不传则模板中不生成该字段"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     out_file: Optional[str] = typer.Option(None, "--out", help="写入到指定文件；不传则打印到 stdout (便于 `> train.yaml`)"),
     dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="训练数据集名称，自动查询 dataset_id / dataset_version_id / OBS 路径并填充模板"),
@@ -449,7 +450,6 @@ def scaffold(
         "model_type":             model_type,
         "train_type":             train_type,
         "model_source":           body_model_source,
-        "model_name":             "",  # 可选，不填走默认
         "train_task_desc":        "",
         # 数据集（可选，按需填；传 --dataset-name / --eval-dataset-name 时自动查询填充）
         "dataset_id":             ds_info.get("dataset_id", ""),
@@ -497,6 +497,10 @@ def scaffold(
             "eval_dataset_name":       eval_ds_info.get("dataset_name", ""),
             "eval_dataset_version_id": eval_ds_info.get("dataset_version_id", ""),
         })
+
+    # model_name 仅在命令行传入时生成，避免空值导致发布流程错乱
+    if model_name:
+        common_top["model_name"] = model_name
 
     if env_type == "HC":
         # HC：资源池作为 train_flavor 超参注入 task_parameter.parameters

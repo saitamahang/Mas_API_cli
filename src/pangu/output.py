@@ -53,6 +53,18 @@ def colorize_status(status: Any) -> str:
     return f"[{color}]{label}[/{color}]"
 
 
+def _filter_by_columns(data: Any, columns: Optional[list[tuple[str, str]]]) -> Any:
+    """按 columns 过滤字段（用于 json/yaml 简洁模式）"""
+    if not columns:
+        return data
+    fields = [f for f, _ in columns]
+    if isinstance(data, list):
+        return [{k: v for k, v in item.items() if k in fields} for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k in fields}
+    return data
+
+
 def print_json_output(data: Any) -> None:
     """JSON 格式输出"""
     print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -163,11 +175,11 @@ def output(
         list_key: 列表数据在响应中的 key (如 "workspaces", "services")
     """
     if fmt == "json":
-        print_json_output(data)
+        print_json_output(_filter_by_columns(data, columns))
         return
 
     if fmt == "yaml":
-        print_yaml_output(data)
+        print_yaml_output(_filter_by_columns(data, columns))
         return
 
     if fmt == "id":

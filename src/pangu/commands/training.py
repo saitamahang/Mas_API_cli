@@ -453,8 +453,6 @@ def scaffold(
         # 数据集（可选，按需填；传 --dataset-name / --eval-dataset-name 时自动查询填充）
         "dataset_id":             ds_info.get("dataset_id", ""),
         "dataset_name":           ds_info.get("dataset_name", ""),
-        "dataset_version_id":     ds_info.get("dataset_version_id", ""),
-        "dataset_split_ratio":    None,  # 1~50；不需要可删除
         # 断点续训（可选）
         "checkpoint_config": {
             "save_checkpoints_max": 5,   # >0 开启断点续训并保存指定数量；0 关闭，-1 无限
@@ -487,13 +485,18 @@ def scaffold(
         "task_parameter":         task_parameter,
     }
 
+    # 数据集版本 ID：仅查询到有效值时才生成，空值会被接口判定为非法
+    ds_version = ds_info.get("dataset_version_id")
+    if ds_version:
+        common_top["dataset_version_id"] = ds_version
+
     # 评测数据集：仅在传入 --eval-dataset-name 时生成，空值提交会被接口判定为非法
     if eval_ds_info:
-        common_top.update({
-            "eval_dataset_id":         eval_ds_info.get("dataset_id", ""),
-            "eval_dataset_name":       eval_ds_info.get("dataset_name", ""),
-            "eval_dataset_version_id": eval_ds_info.get("dataset_version_id", ""),
-        })
+        common_top["eval_dataset_id"]   = eval_ds_info.get("dataset_id", "")
+        common_top["eval_dataset_name"] = eval_ds_info.get("dataset_name", "")
+        eval_version = eval_ds_info.get("dataset_version_id")
+        if eval_version:
+            common_top["eval_dataset_version_id"] = eval_version
 
     # model_name 仅在命令行传入时生成，避免空值导致发布流程错乱
     if model_name:

@@ -1104,15 +1104,28 @@ def publish_model(
     description: str = typer.Option("", "--description", "-d", help="资产描述"),
     fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
 ):
-    """发布训练模型到资产中心 (3.13.7)"""
+    """发布训练模型到资产中心 (3.13.7)
+
+    model_id 为训练产物的模型 ID，未传时通过 GET /models?execution_id=xxx 查询训练产出列表取第一个。
+    """
     client = PanguClient()
 
-    if not execution_id or not model_id:
+    # 1) 获取 execution_id（任务详情）
+    if not execution_id:
         detail = client.get(TASK_PATH, workspace_id=workspace, task_id=task_id)
-        execution_id = execution_id or detail.get("execution_id", "")
-        model_id     = model_id     or detail.get("model_id", "")
-    if not execution_id or not model_id:
-        console.print("[red]无法自动获取 execution_id 或 model_id，请手动指定[/red]")
+        execution_id = detail.get("execution_id", "")
+    if not execution_id:
+        console.print("[red]无法自动获取 execution_id，请通过 --execution-id 手动指定[/red]")
+        raise typer.Exit(1)
+
+    # 2) 获取 model_id（训练产物列表，取第一个）
+    if not model_id:
+        models_data = client.get(MODELS_PATH, workspace_id=workspace, params={"execution_id": execution_id})
+        models = models_data.get("models") or [] if isinstance(models_data, dict) else []
+        if models and isinstance(models[0], dict):
+            model_id = models[0].get("model_id", "")
+    if not model_id:
+        console.print("[red]无法自动获取训练产物 model_id，请通过 --model-id 手动指定[/red]")
         raise typer.Exit(1)
 
     body = {

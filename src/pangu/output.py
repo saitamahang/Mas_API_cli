@@ -175,11 +175,13 @@ def output(
         list_key: 列表数据在响应中的 key (如 "workspaces", "services")
     """
     if fmt == "json":
-        print_json_output(_filter_by_columns(data, columns))
+        items = data.get(list_key, data) if list_key and isinstance(data, dict) else data
+        print_json_output(_filter_by_columns(items, columns))
         return
 
     if fmt == "yaml":
-        print_yaml_output(_filter_by_columns(data, columns))
+        items = data.get(list_key, data) if list_key and isinstance(data, dict) else data
+        print_yaml_output(_filter_by_columns(items, columns))
         return
 
     if fmt == "id":

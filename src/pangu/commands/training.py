@@ -353,6 +353,10 @@ def scaffold(
     chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下直接写入模板"),
     cards: int = typer.Option(1, "--cards", help="单节点卡数：1|2|4|8，决定 flavor_id"),
     nodes: int = typer.Option(1, "--nodes", help="节点数，默认 1；仅在 8 卡时允许 >1"),
+    auto_publish: bool = typer.Option(False, "--auto-publish/--no-auto-publish", help="训练完成后自动发布为模型版本，默认关闭"),
+    asset_name: Optional[str] = typer.Option(None, "--asset-name", help="自动发布时的模型资产名称（--auto-publish 时必填）"),
+    publish_desc: Optional[str] = typer.Option(None, "--publish-desc", help="自动发布时的模型描述"),
+    visibility: str = typer.Option("current", "--visibility", help="发布可见性: current(本空间) | all(全空间) | <workspace_id>(指定空间)"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -471,6 +475,10 @@ def scaffold(
         # 量化场景（可选，当前未启用）
         # "output_artifact_name":   "",
         # "quantization_type":      "",
+        # 自动发布配置（默认关闭；开启时需补充 asset_name / description / visibility）
+        "auto_publish_config":    {
+            "is_auto_publish": False,
+        },
         # 强化学习 RLHF 场景（当前接口注明"不支持"，保留占位说明）
         "reward_model_id":        "",
         # 日志
@@ -496,6 +504,19 @@ def scaffold(
     # model_name 仅在命令行传入时生成，避免空值导致发布流程错乱
     if model_name:
         common_top["model_name"] = model_name
+
+    # 自动发布：开启时补充必填子字段
+    if auto_publish:
+        if not asset_name:
+            console.print("[red]--auto-publish 时 --asset-name 必填[/red]")
+            raise typer.Exit(1)
+        pub_cfg = {
+            "is_auto_publish": True,
+            "asset_name":      asset_name,
+            "description":     publish_desc or "",
+            "visibility":      visibility,
+        }
+        common_top["auto_publish_config"] = pub_cfg
 
     if env_type == "HC":
         # HC：资源池作为 train_flavor 超参注入 task_parameter.parameters

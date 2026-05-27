@@ -24,6 +24,10 @@ MONITOR_PATH = DETAIL_PATH + "/monitors"
 TASKS_PATH = "/v1/{project_id}/model-service/tasks"
 USAGE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/model-service/resource-usage"
 
+# 资产查询路径（scaffold 用）
+MODEL_ASSET_PATH = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets/{asset_id}"
+MODEL_ASSET_EXT_PATH = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets-ext"
+
 LIST_COLUMNS = [
     ("service_id", "服务 ID"),
     ("service_name", "名称"),
@@ -92,6 +96,10 @@ def _build_deploy_body(
     task_config: Optional[str] = None,
     input_types: Optional[list[str]] = None,
     output_types: Optional[list[str]] = None,
+    infer_version: Optional[str] = None,
+    user_env: Optional[list[dict]] = None,
+    https_secrets: Optional[str] = None,
+    edge_node_port: Optional[int] = None,
     desc: Optional[str] = None,
 ) -> dict:
     """构建部署请求体：YAML 配置 + 命令行参数合并，命令行优先"""
@@ -118,6 +126,8 @@ def _build_deploy_body(
         "elb_id": elb_id,
         "deployed_model": deployed_model,
         "task_config": task_config,
+        "infer_version": infer_version,
+        "https_secrets": https_secrets,
     }
     for k, v in overrides.items():
         if v is not None:
@@ -137,6 +147,12 @@ def _build_deploy_body(
         body["service_config"]["instance_count"] = instances
     if pool_id is not None:
         body["service_config"]["cluster_id"] = pool_id
+    if user_env is not None:
+        body["service_config"]["user_env"] = user_env
+    if https_secrets is not None:
+        body["service_config"]["https_secrets"] = https_secrets
+    if edge_node_port is not None:
+        body["service_config"]["edge_node_port"] = edge_node_port
 
     # model_config 处理
     if "model_config" not in body:
@@ -150,13 +166,141 @@ def _build_deploy_body(
 
     # infer_type 默认值
     if "infer_type" not in body:
-        body["infer_type"] = "online"
+        body["infer_type"] = "edge"
 
     # request_mode 默认值
     if "request_mode" not in body:
         body["request_mode"] = "sync"
 
     return body
+
+
+def _auto_fill_from_asset(client: PanguClient, body: dict, workspace: Optional[str] = None) -> tuple[dict, list[str]]:
+    """从 model-assets-ext 自动补全缺失字段（用户显式传入的优先），返回 (body, 补全字段名列表)"""
+    asset_id = body.get("asset_id")
+    if not asset_id:
+        return body, []
+
+    filled: list[str] = []
+    svc_cfg = body.get("service_config", {})
+    has_custom_spec = bool(svc_cfg.get("custom_spec"))
+    has_user_env = bool(svc_cfg.get("user_env"))
+
+    # 检查是否已有所有可从资产获取的字段
+    has_all = all([
+        body.get("asset_type"),
+        body.get("arch"),
+        body.get("device_type"),
+        body.get("chip_type"),
+        body.get("request_mode"),
+        body.get("category"),
+        body.get("asset_tag"),
+    ])
+    if has_all and has_custom_spec and has_user_env:
+        return body, []
+
+    try:
+        ext_data = client.get(
+            MODEL_ASSET_EXT_PATH,
+            workspace_id=workspace,
+            params={"asset_ids": [asset_id], "limit": 1},
+        )
+    except Exception:
+        return body, []
+
+    assets = (ext_data.get("assets") if isinstance(ext_data, dict) else None) or []
+    if not assets or not isinstance(assets[0], dict):
+        return body, []
+
+    ma = assets[0].get("modelAsset") or {}
+    if not isinstance(ma, dict):
+        return body, []
+
+    actions = ma.get("actions") or []
+    if not actions:
+        return body, []
+
+    # 根据 infer_type 匹配对应 action（EDGE-DEPLOY / ONLINE-DEPLOY）
+    target_action_type = "EDGE-DEPLOY" if body.get("infer_type") == "edge" else "ONLINE-DEPLOY"
+    action_info: dict = {}
+    for act in actions:
+        if isinstance(act, dict) and act.get("action_type") == target_action_type:
+            action_info = act
+            break
+    if not action_info:
+        # 回退到第一个可用 action
+        action_info = actions[0] if isinstance(actions[0], dict) else {}
+
+    # resource / image 在 action.resources[0] 下
+    resources = action_info.get("resources") or []
+    resource_info = resources[0] if resources and isinstance(resources[0], dict) else {}
+    image_info = resource_info.get("image") or {}
+
+    # 补全顶层字段（仅当缺失时）
+    if not body.get("asset_type") and ma.get("asset_type"):
+        body["asset_type"] = ma["asset_type"]
+        filled.append("asset_type")
+    if not body.get("category") and ma.get("category"):
+        body["category"] = ma["category"]
+        filled.append("category")
+    if not body.get("asset_tag") and action_info.get("asset_tag"):
+        body["asset_tag"] = action_info["asset_tag"]
+        filled.append("asset_tag")
+    if not body.get("device_type"):
+        body["device_type"] = resource_info.get("device_type") or image_info.get("device_type") or "NONE"
+        filled.append("device_type")
+    if not body.get("chip_type"):
+        body["chip_type"] = resource_info.get("chip_type") or image_info.get("chip_type") or ""
+        filled.append("chip_type")
+    if not body.get("arch"):
+        body["arch"] = image_info.get("arch") or ""
+        filled.append("arch")
+    if not body.get("request_mode"):
+        body["request_mode"] = image_info.get("request_mode") or "sync"
+        filled.append("request_mode")
+
+    # 补全 service_config.custom_spec
+    if not has_custom_spec:
+        custom_spec: dict = {}
+        cpu = resource_info.get("cpu")
+        memory = resource_info.get("memory")
+        card_count = resource_info.get("card_count")
+        dev_type = body.get("device_type", "")
+        if cpu is not None:
+            custom_spec["cpu"] = cpu
+        if memory is not None:
+            custom_spec["memory"] = memory
+        if card_count is not None:
+            if dev_type == "GPU":
+                custom_spec["gpu"] = card_count
+            elif dev_type == "NPU":
+                custom_spec["ascend"] = card_count
+        if custom_spec:
+            svc_cfg = body.setdefault("service_config", {})
+            svc_cfg["custom_spec"] = custom_spec
+            svc_cfg["specification"] = "custom"
+            filled.append("custom_spec")
+
+    # 补全 service_config.user_env（action_env 字段名：env_name / default_value / data_type）
+    if not has_user_env:
+        action_env = action_info.get("action_env") or []
+        if action_env:
+            user_env = []
+            for env in action_env:
+                if isinstance(env, dict):
+                    user_env.append({
+                        "key": env.get("env_name", ""),
+                        "value": env.get("default_value", ""),
+                        "type": env.get("data_type", "string"),
+                        "modifiable": env.get("modifiable", False),
+                        "displayable": env.get("displayable", True),
+                        "env_type": "default",
+                    })
+            if user_env:
+                body.setdefault("service_config", {})["user_env"] = user_env
+                filled.append("user_env")
+
+    return body, filled
 
 
 # ---- 命令 ----
@@ -268,6 +412,9 @@ def deploy_service(
     task_config: Optional[str] = typer.Option(None, "--task-config", help="异步模型作业配置参数 (XML 格式字符串)"),
     input_types: Optional[list[str]] = typer.Option(None, "--input-type", help="异步模型输入数据类型 (可多次传入，如 OBS)"),
     output_types: Optional[list[str]] = typer.Option(None, "--output-type", help="异步模型输出数据类型 (可多次传入，如 OBS)"),
+    infer_version: Optional[str] = typer.Option(None, "--infer-version", help="推理版本，如 v1"),
+    https_secrets: Optional[str] = typer.Option(None, "--https-secrets", help="HTTPS 证书 ID (边缘部署 NODE 模式)"),
+    edge_node_port: Optional[int] = typer.Option(None, "--edge-node-port", help="边缘服务端口 (30000-40000，NODE 模式)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待部署完成"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
@@ -286,6 +433,8 @@ def deploy_service(
         security_bar_type=security_bar_type, security_bar_edition=security_bar_edition,
         deployed_model=deployed_model, task_config=task_config,
         input_types=input_types, output_types=output_types,
+        infer_version=infer_version, https_secrets=https_secrets,
+        edge_node_port=edge_node_port,
     )
 
     # 必填参数校验（对照 PDF §3.14.4）
@@ -311,6 +460,11 @@ def deploy_service(
         raise typer.Exit(1)
 
     client = PanguClient()
+
+    # 自动补全：从 model-assets-ext 查询缺失字段
+    body, filled = _auto_fill_from_asset(client, body, workspace=workspace)
+    if filled:
+        console.print(f"[dim]已从模型资产信息自动补全: {', '.join(filled)}[/dim]")
     data = client.post(BASE_PATH, workspace_id=workspace, json=body)
 
     service_id = data.get("service_id", "")
@@ -339,6 +493,160 @@ def deploy_service(
         title="服务部署",
         status_key="status",
     )
+
+
+@app.command("scaffold")
+def scaffold_deploy(
+    asset_id: str = typer.Option(..., "--asset-id", help="模型资产 ID (必填)"),
+    infer_type: str = typer.Option("edge", "--infer-type", help="部署类型: online/edge"),
+    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID (专属池必填)"),
+    instances: int = typer.Option(1, "--instances", "-n", help="实例数 (1-128)"),
+    service_name: Optional[str] = typer.Option(None, "--name", help="服务名称"),
+    edge_access_mode: str = typer.Option("ELB", "--edge-access-mode", help="边缘访问模式: ELB/NODE/MONITOR-GATEWAY"),
+    infer_version: Optional[str] = typer.Option(None, "--infer-version", help="推理版本，如 v1"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    output: str = typer.Option("deploy.yaml", "--output", "-o", help="输出文件路径"),
+):
+    """生成部署服务 YAML 模板
+
+    自动查询模型资产信息，填充 asset_type / category 等字段，
+    未获取到的字段用 TODO 占位。生成后修改即可通过 `pangu service deploy --config` 提交。
+    """
+    client = PanguClient()
+
+    # 1) 获取模型资产详情 (3.12.2)
+    asset_detail = client.get(MODEL_ASSET_PATH, workspace_id=workspace, asset_id=asset_id)
+    asset_type = asset_detail.get("asset_type", "")
+    category = asset_detail.get("category", "pangu")
+
+    # 2) 获取模型扩展信息 (3.12.3)，提取 Resource / Image / Action 信息
+    ext_data = client.get(
+        MODEL_ASSET_EXT_PATH,
+        workspace_id=workspace,
+        params={"asset_ids": [asset_id], "limit": 1},
+    )
+    assets = (ext_data.get("assets") if isinstance(ext_data, dict) else None) or []
+    resource_info: dict = {}
+    image_info: dict = {}
+    action_info: dict = {}
+    if assets and isinstance(assets[0], dict):
+        ma = assets[0].get("modelAsset") or {}
+        if isinstance(ma, dict):
+            actions = ma.get("actions") or []
+            # 根据 infer_type 匹配对应 action
+            target_action_type = "EDGE-DEPLOY" if infer_type == "edge" else "ONLINE-DEPLOY"
+            for act in actions:
+                if isinstance(act, dict) and act.get("action_type") == target_action_type:
+                    action_info = act
+                    break
+            if not action_info and actions and isinstance(actions[0], dict):
+                action_info = actions[0]
+            # resource / image 在 action.resources[0] 下
+            act_resources = action_info.get("resources") or []
+            if act_resources and isinstance(act_resources[0], dict):
+                resource_info = act_resources[0]
+            image_info = resource_info.get("image") or {}
+
+    # 自动提取字段（PDF 部署章节说明从 model-assets-ext 获取）
+    device_type = resource_info.get("device_type") or image_info.get("device_type") or "TODO-NPU/GPU/NONE"
+    chip_type = resource_info.get("chip_type") or image_info.get("chip_type") or ""
+    arch = image_info.get("arch") or "TODO-ARM/X86"
+    request_mode = image_info.get("request_mode") or "sync"
+    asset_tag = action_info.get("asset_tag", "")
+
+    # infer_type 与 action_type 匹配
+    action_type = action_info.get("action_type", "")
+    if infer_type == "online" and "EDGE" in str(action_type).upper():
+        console.print("[yellow]警告: 所选模型 action_type 为 EDGE-DEPLOY，建议 --infer-type edge[/yellow]")
+    if infer_type == "edge" and "ONLINE" in str(action_type).upper():
+        console.print("[yellow]警告: 所选模型 action_type 为 ONLINE-DEPLOY，建议 --infer-type online[/yellow]")
+
+    # custom_spec 字段（Resource 信息）
+    cpu = resource_info.get("cpu")
+    memory = resource_info.get("memory")
+    card_count = resource_info.get("card_count")
+
+    custom_spec: dict = {}
+    if cpu is not None:
+        custom_spec["cpu"] = cpu
+    if memory is not None:
+        custom_spec["memory"] = memory
+    if card_count is not None:
+        if device_type == "GPU":
+            custom_spec["gpu"] = card_count
+        elif device_type == "NPU":
+            custom_spec["ascend"] = card_count
+
+    # user_env 字段（Action 信息中的 action_env，字段名：env_name / default_value / data_type）
+    action_env = action_info.get("action_env") or []
+    user_env = []
+    for env in action_env:
+        if isinstance(env, dict):
+            user_env.append({
+                "key": env.get("env_name", ""),
+                "value": env.get("default_value", ""),
+                "type": env.get("data_type", "string"),
+                "modifiable": env.get("modifiable", False),
+                "displayable": env.get("displayable", True),
+                "env_type": "default",
+            })
+
+    # 3) 构造模板
+    template: dict = {
+        "service_name": service_name or "TODO-请填写服务名称（≤64字符）",
+        "service_desc": "",
+        "asset_id": asset_id,
+        "asset_type": asset_type or "TODO-NLP/CV/MM/Predict/AI4Science/Profession",
+        "arch": arch,
+        "infer_type": infer_type,
+        "device_type": device_type,
+        "request_mode": request_mode,
+        "category": category,
+        "service_config": {
+            "instance_count": instances,
+            "cluster_id": pool_id or "TODO-pangu pool list 获取资源池ID",
+            "specification": "custom" if custom_spec else "",
+            "custom_spec": custom_spec if custom_spec else {},
+        },
+        "model_config": {},
+    }
+
+    if asset_tag:
+        template["asset_tag"] = asset_tag
+    if chip_type:
+        template["chip_type"] = chip_type
+    if infer_version:
+        template["infer_version"] = infer_version
+
+    # 边缘部署特有字段
+    if infer_type == "edge":
+        template["service_config"]["edge_access_mode"] = edge_access_mode
+        if edge_access_mode == "ELB":
+            template["service_config"]["elb_id"] = "TODO-边缘负载均衡ID"
+        elif edge_access_mode == "NODE":
+            template["service_config"]["edge_node_port"] = "TODO-30000~40000"
+        if user_env:
+            template["service_config"]["user_env"] = user_env
+
+    # 科学计算场景
+    if asset_type == "AI4Science":
+        template["request_mode"] = "async"
+        template["scene"] = "TODO-Weather/Precip/Ocean/..."
+        template["model_config"] = {
+            "task_config": "TODO-从 model-detail 获取",
+            "input_types": ["OBS"],
+            "output_types": ["OBS"],
+        }
+
+    # 安全护栏
+    template["security_bar_type"] = "NOT_SUPPORT"
+
+    # 4) 输出
+    yaml_text = yaml.dump(template, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    out_path = Path(output)
+    out_path.write_text(yaml_text, encoding="utf-8")
+    console.print(f"[green]部署模板已生成: {out_path.absolute()}[/green]")
+    console.print("[dim]提示: 请检查 TODO 项并补齐后执行 pangu service deploy --config {}[/dim]".format(output))
 
 
 @app.command("update")

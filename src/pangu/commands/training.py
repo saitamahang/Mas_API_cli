@@ -353,7 +353,6 @@ def scaffold(
     chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下直接写入模板"),
     cards: int = typer.Option(1, "--cards", help="单节点卡数：1|2|4|8，决定 flavor_id"),
     nodes: int = typer.Option(1, "--nodes", help="节点数，默认 1；仅在 8 卡时允许 >1"),
-    auto_publish: bool = typer.Option(True, "--auto-publish/--no-auto-publish", help="训练完成后自动发布为模型版本，默认开启"),
 ):
     """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
 
@@ -472,10 +471,6 @@ def scaffold(
         # 量化场景（可选，当前未启用）
         # "output_artifact_name":   "",
         # "quantization_type":      "",
-        # 自动发布配置（可选，训练完成后自动发布为模型版本）
-        "auto_publish_config": {
-            "is_auto_publish": auto_publish,
-        },
         # 强化学习 RLHF 场景（当前接口注明"不支持"，保留占位说明）
         "reward_model_id":        "",
         # 日志
@@ -582,7 +577,6 @@ def create_task(
     train_type: Optional[str] = typer.Option(None, "--train-type", help="(必填，默认 SFT) " + HELP_TRAIN_TYPE),
     model_source: Optional[str] = typer.Option(None, "--model-source", help=HELP_MODEL_SRC + "；默认 pangu"),
     model_name: Optional[str] = typer.Option(None, "--model-name", help="模型名称 (可选)"),
-    auto_publish: bool = typer.Option(True, "--auto-publish/--no-auto-publish", help="训练完成后自动发布为模型版本，默认开启"),
     # output_artifact_name: Optional[str] = typer.Option(None, "--output-artifact-name", help="任务输出产物名称 (量化场景使用)"),
     # quantization_type: Optional[str] = typer.Option(None, "--quantization-type", help="量化算法类型，例如 QUANTIZATION-W8A8C"),
     # 数据集
@@ -672,7 +666,6 @@ def create_task(
     if t_flops is not None:      body["t_flops"]               = t_flops
     if plog_level is not None:   body["plog_level"]            = plog_level
     if is_input_finished is not None: body["is_input_finished"] = is_input_finished
-    body.setdefault("auto_publish_config", {})["is_auto_publish"] = auto_publish
 
     # Fix 4：dataset_split_ratio 范围校验
     dsr = body.get("dataset_split_ratio")

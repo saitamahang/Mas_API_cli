@@ -73,7 +73,7 @@ class PanguClient:
 
     def _handle_response(self, resp: httpx.Response) -> Any:
         """统一处理响应"""
-        if resp.status_code in (200, 201):
+        if resp.status_code in (200, 201, 202, 204):
             content_type = resp.headers.get("content-type", "")
             if "application/json" in content_type:
                 return resp.json()

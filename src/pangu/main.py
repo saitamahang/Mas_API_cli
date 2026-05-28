@@ -12,7 +12,7 @@ from pangu.auth import AuthManager
 from pangu.config import PanguConfig
 
 try:
-    __version__ = get_version("pangu")
+    __version__ = get_version("pangu-cli")
 except Exception:
     __version__ = "0.2.0"
 

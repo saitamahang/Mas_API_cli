@@ -61,7 +61,9 @@ def _extract_resource_info(data: dict) -> tuple[list[dict], list[dict]]:
                 continue
             img = res.get("image") or {}
             arch = img.get("arch") if isinstance(img, dict) else ""
-            arch = arch or "未知"
+            # 训练资源池默认 ARM；部署按实际提取
+            if not arch:
+                arch = "ARM" if action_type in TRAIN_ACTIONS else "未知"
 
             g = arch_groups[arch]
             ct = res.get("chip_type")

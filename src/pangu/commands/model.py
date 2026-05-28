@@ -308,6 +308,20 @@ def get_model(
 
         train_rows, deploy_rows = _extract_resource_info(data)
 
+        # 先给所有 row 生成 pool_cmd（json / table 共用）
+        for row in train_rows:
+            chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
+            arch = f"--arch {row['arch']}" if row["arch"] else ""
+            row["pool_cmd"] = f"pangu pool list {chips} {arch} --job-type Train".strip()
+
+        for row in deploy_rows:
+            chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
+            arch = f"--arch {row['arch']}" if row["arch"] else ""
+            if row["action_type"] == "EDGE-DEPLOY":
+                row["pool_cmd"] = f"pangu pool list {chips} {arch} --edge".strip()
+            else:
+                row["pool_cmd"] = f"pangu pool list {chips} {arch} --job-type Infer".strip()
+
         if fmt in ("json", "yaml"):
             output({
                 "asset_id": asset_id,
@@ -342,26 +356,14 @@ def get_model(
             _print_table(f"资产 {asset_id} 支持的训练资源", train_rows)
             console.print("\n[bold]对应资源池查询命令:[/bold]")
             for row in train_rows:
-                chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
-                arch = f"--arch {row['arch']}" if row["arch"] else ""
-                cmd = f"pangu pool list {chips} {arch} --job-type Train".strip()
-                row["pool_cmd"] = cmd
-                console.print(f"  [cyan]训练({row['action_type']}):[/cyan] {cmd}")
+                console.print(f"  [cyan]训练({row['action_type']}):[/cyan] {row['pool_cmd']}")
 
         if deploy_rows:
             _print_table(f"资产 {asset_id} 支持的部署资源", deploy_rows)
             console.print("\n[bold]对应资源池查询命令:[/bold]")
             for row in deploy_rows:
-                chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
-                arch = f"--arch {row['arch']}" if row["arch"] else ""
-                if row["action_type"] == "EDGE-DEPLOY":
-                    cmd = f"pangu pool list {chips} {arch} --edge".strip()
-                    label = "边缘部署"
-                else:
-                    cmd = f"pangu pool list {chips} {arch} --job-type Infer".strip()
-                    label = "在线部署"
-                row["pool_cmd"] = cmd
-                console.print(f"  [cyan]{label}:[/cyan] {cmd}")
+                label = "边缘部署" if row["action_type"] == "EDGE-DEPLOY" else "在线部署"
+                console.print(f"  [cyan]{label}:[/cyan] {row['pool_cmd']}")
         console.print()
         return
 

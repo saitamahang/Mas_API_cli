@@ -923,12 +923,11 @@ def service_usage(
 
 @app.command("secrets")
 def list_secrets(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
     """查看边缘 HTTPS 证书列表（用于 NODE 模式部署）"""
     client = PanguClient()
-    data = client.get(SECRETS_PATH, workspace_id=workspace)
+    data = client.get(SECRETS_PATH, workspace_id="0")
 
     secrets = data.get("secrets", [])
     columns = [
@@ -943,13 +942,12 @@ def list_secrets(
 @app.command("loadbalancers")
 def list_loadbalancers(
     cluster_id: str = typer.Option(..., "--cluster-id", help="边缘资源池 ID（pangu pool list --edge 获取）"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
 ):
     """查看边缘负载均衡列表（用于 ELB 模式部署）"""
     client = PanguClient()
     params = {"cluster_id": cluster_id}
-    data = client.get(EDGE_LB_PATH, workspace_id=workspace, params=params)
+    data = client.get(EDGE_LB_PATH, workspace_id="0", params=params)
 
     lbs = data.get("load_balancers", [])
     # 展平 host_ips 为字符串

@@ -17,67 +17,86 @@ app = typer.Typer(help="模型资产管理")
 console = Console()
 
 
-def _extract_resource_info(data: dict) -> list[dict]:
-    """从资产详情 data['actions'] 提取资源规格信息。"""
+TRAIN_ACTIONS = {
+    "PRETRAIN", "SFT", "LORA", "DPO", "RLHF",
+    "TRANSFORM", "QUANTIZATION", "EVALUATION",
+}
+DEPLOY_ACTIONS = {"ONLINE-DEPLOY", "EDGE-DEPLOY"}
+
+
+def _extract_resource_info(data: dict) -> tuple[list[dict], list[dict]]:
+    """从资产详情 data['actions'] 提取训练和部署资源规格信息。
+
+    同一 action_type 下若 resources 包含多种 arch，会按 arch 拆分多行展示，
+    确保用户能看到全部可用架构（如 ARM + X86）。
+
+    Returns:
+        (train_rows, deploy_rows)
+    """
+    from collections import defaultdict
+
     actions = data.get("actions") or []
-    rows: list[dict] = []
+    train_rows: list[dict] = []
+    deploy_rows: list[dict] = []
 
     for act in actions:
         if not isinstance(act, dict):
             continue
         action_type = act.get("action_type", "")
-        if action_type not in ("ONLINE-DEPLOY", "EDGE-DEPLOY"):
+        if action_type in TRAIN_ACTIONS:
+            target = train_rows
+        elif action_type in DEPLOY_ACTIONS:
+            target = deploy_rows
+        else:
             continue
 
         resources = act.get("resources") or []
-        chip_types: list[str] = []
-        arch_set: set[str] = set()
-        cpus: list[int] = []
-        mems: list[int] = []
+        # 按 arch 分组收集 chip_type / cpu / memory
+        arch_groups: dict[str, dict] = defaultdict(lambda: {
+            "chip_types": [], "cpus": [], "mems": [],
+        })
 
         for res in resources:
             if not isinstance(res, dict):
                 continue
-            ct = res.get("chip_type")
-            if ct and ct not in chip_types:
-                chip_types.append(ct)
-            cpu = res.get("cpu")
-            if isinstance(cpu, int):
-                cpus.append(cpu)
-            mem = res.get("memory")
-            if isinstance(mem, int):
-                mems.append(mem)
             img = res.get("image") or {}
-            if isinstance(img, dict):
-                a = img.get("arch")
-                if a:
-                    arch_set.add(a)
+            arch = img.get("arch") if isinstance(img, dict) else ""
+            arch = arch or "未知"
 
-        # arch 去重逻辑：单一取单一，多个优先 ARM，否则取第一个
-        if len(arch_set) == 1:
-            arch = arch_set.pop()
-        elif "ARM" in arch_set:
-            arch = "ARM"
-        elif arch_set:
-            arch = arch_set.pop()
-        else:
-            arch = ""
+            g = arch_groups[arch]
+            ct = res.get("chip_type")
+            if ct and ct not in g["chip_types"]:
+                g["chip_types"].append(ct)
 
-        # 资源规格描述
-        specs: list[str] = []
-        if cpus:
-            specs.append(f"CPU: {cpus[0]}")
-        if mems:
-            specs.append(f"Memory: {mems[0]}Mi")
+            try:
+                cpu = int(res.get("cpu", 0))
+                if cpu:
+                    g["cpus"].append(cpu)
+            except (TypeError, ValueError):
+                pass
 
-        rows.append({
-            "action_type": action_type,
-            "chip_types": chip_types,
-            "arch": arch,
-            "spec": ", ".join(specs) if specs else "-",
-        })
+            try:
+                mem = int(res.get("memory", 0))
+                if mem:
+                    g["mems"].append(mem)
+            except (TypeError, ValueError):
+                pass
 
-    return rows
+        for arch, g in arch_groups.items():
+            specs: list[str] = []
+            if g["cpus"]:
+                specs.append(f"CPU: {g['cpus'][0]}")
+            if g["mems"]:
+                specs.append(f"Memory: {g['mems'][0]}Mi")
+
+            target.append({
+                "action_type": action_type,
+                "chip_types": g["chip_types"],
+                "arch": arch,
+                "spec": ", ".join(specs) if specs else "-",
+            })
+
+    return train_rows, deploy_rows
 
 # ---- 路径（严格对应 PDF URI）----
 BASE_PATH         = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets"
@@ -285,41 +304,60 @@ def get_model(
             console.print("[red]返回数据异常，无法解析资源规格[/red]")
             raise typer.Exit(1)
 
-        resource_rows = _extract_resource_info(data)
+        train_rows, deploy_rows = _extract_resource_info(data)
 
         if fmt in ("json", "yaml"):
-            output({"asset_id": asset_id, "deploy_options": resource_rows}, fmt=fmt)
+            output({
+                "asset_id": asset_id,
+                "train_options": train_rows,
+                "deploy_options": deploy_rows,
+            }, fmt=fmt)
             return
 
-        if not resource_rows:
-            console.print("[yellow]该资产未找到部署相关的资源规格信息[/yellow]")
+        if not train_rows and not deploy_rows:
+            console.print("[yellow]该资产未找到训练或部署相关的资源规格信息[/yellow]")
             return
 
-        console.print(f"\n[bold]资产 {asset_id} 支持的资源规格:[/bold]\n")
         from rich.table import Table
-        table = Table(show_header=True, header_style="bold")
-        table.add_column("部署方式")
-        table.add_column("芯片类型")
-        table.add_column("架构")
-        table.add_column("资源规格")
 
-        for row in resource_rows:
-            table.add_row(
-                row["action_type"],
-                ", ".join(row["chip_types"]) or "-",
-                row["arch"] or "-",
-                row["spec"],
-            )
-        console.print(table)
+        def _print_table(title: str, rows: list[dict]) -> None:
+            console.print(f"\n[bold]{title}[/bold]\n")
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("方式")
+            table.add_column("芯片类型")
+            table.add_column("架构")
+            table.add_column("资源规格")
+            for row in rows:
+                table.add_row(
+                    row["action_type"],
+                    ", ".join(row["chip_types"]) or "-",
+                    row["arch"] or "-",
+                    row["spec"],
+                )
+            console.print(table)
 
-        console.print("\n[bold]对应资源池查询命令:[/bold]")
-        for row in resource_rows:
-            chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
-            arch = f"--arch {row['arch']}" if row["arch"] else ""
-            edge = "--edge" if row["action_type"] == "EDGE-DEPLOY" else ""
-            cmd = f"pangu pool list {chips} {arch} {edge}".strip()
-            label = "边缘部署" if row["action_type"] == "EDGE-DEPLOY" else "在线部署"
-            console.print(f"  [cyan]{label}:[/cyan] {cmd}")
+        if train_rows:
+            _print_table(f"资产 {asset_id} 支持的训练资源", train_rows)
+            console.print("\n[bold]对应资源池查询命令:[/bold]")
+            for row in train_rows:
+                chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
+                arch = f"--arch {row['arch']}" if row["arch"] else ""
+                cmd = f"pangu pool list {chips} {arch} --job-type Train".strip()
+                console.print(f"  [cyan]训练({row['action_type']}):[/cyan] {cmd}")
+
+        if deploy_rows:
+            _print_table(f"资产 {asset_id} 支持的部署资源", deploy_rows)
+            console.print("\n[bold]对应资源池查询命令:[/bold]")
+            for row in deploy_rows:
+                chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
+                arch = f"--arch {row['arch']}" if row["arch"] else ""
+                if row["action_type"] == "EDGE-DEPLOY":
+                    cmd = f"pangu pool list {chips} {arch} --edge".strip()
+                    label = "边缘部署"
+                else:
+                    cmd = f"pangu pool list {chips} {arch} --job-type Infer".strip()
+                    label = "在线部署"
+                console.print(f"  [cyan]{label}:[/cyan] {cmd}")
         console.print()
         return
 

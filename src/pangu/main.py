@@ -14,7 +14,7 @@ from pangu.config import PanguConfig
 try:
     __version__ = get_version("pangu")
 except Exception:
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
 app = typer.Typer(
     name="pangu",

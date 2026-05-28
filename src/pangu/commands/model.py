@@ -345,6 +345,7 @@ def get_model(
                 chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
                 arch = f"--arch {row['arch']}" if row["arch"] else ""
                 cmd = f"pangu pool list {chips} {arch} --job-type Train".strip()
+                row["pool_cmd"] = cmd
                 console.print(f"  [cyan]训练({row['action_type']}):[/cyan] {cmd}")
 
         if deploy_rows:
@@ -359,6 +360,7 @@ def get_model(
                 else:
                     cmd = f"pangu pool list {chips} {arch} --job-type Infer".strip()
                     label = "在线部署"
+                row["pool_cmd"] = cmd
                 console.print(f"  [cyan]{label}:[/cyan] {cmd}")
         console.print()
         return

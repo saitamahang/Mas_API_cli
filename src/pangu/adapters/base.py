@@ -18,6 +18,7 @@ class PoolRequest:
     use_type: Optional[str] = None
     flavor_ids: Optional[List[str]] = field(default=None)
     asset_code: Optional[str] = None
+    is_edge: bool = False
 
 
 class PoolAdapter(ABC):

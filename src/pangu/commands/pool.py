@@ -43,6 +43,7 @@ def list_pools(
     use_type: Optional[str] = typer.Option(None, "--use-type", help="[HC 必填] 使用类型；常用值 private（默认建议值，未传时不在代码侧自动补，需显式 --use-type private）"),
     flavor_ids: Optional[List[str]] = typer.Option(None, "--flavor-id", help="[HC] 资源规格 ID，可多次传入"),
     asset_code: Optional[str] = typer.Option(None, "--asset-code", help="[HC] 资产编码"),
+    edge: bool = typer.Option(False, "--edge", help="查询边缘资源池（HCS）"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table (表格) | json | yaml | id (仅 ID 列表)"),
 ):
     """查询资源池列表（env_type=HCS/HC 由 pangu config set env_type 控制）"""
@@ -58,15 +59,18 @@ def list_pools(
         use_type=use_type,
         flavor_ids=flavor_ids,
         asset_code=asset_code,
+        is_edge=edge,
     )
     body = adapter.build_request(req)
 
+    path = getattr(adapter, "edge_path", adapter.path) if req.is_edge else adapter.path
+
     if adapter.workspace_in_path:
-        data = client.post(adapter.path, workspace_id=workspace, json=body)
+        data = client.post(path, workspace_id=workspace, json=body)
     else:
         wid = client.config.get_workspace_id(workspace)
         extra_hdrs = adapter.extra_headers(wid)
-        data = client.post(adapter.path, workspace_id=None, json=body, extra_headers=extra_hdrs)
+        data = client.post(path, workspace_id=None, json=body, extra_headers=extra_hdrs)
 
     items = adapter.normalize(data)
 

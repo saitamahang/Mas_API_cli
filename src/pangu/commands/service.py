@@ -23,6 +23,8 @@ NODE_RUNLOG_PATH = DETAIL_PATH + "/nodes/{model_node_id}/runlogs"
 MONITOR_PATH = DETAIL_PATH + "/monitors"
 TASKS_PATH = "/v1/{project_id}/model-service/tasks"
 USAGE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/model-service/resource-usage"
+SECRETS_PATH = "/v1/{project_id}/services/secrets"
+EDGE_LB_PATH = "/v1/{project_id}/services/edge/loadbalancers"
 
 # 资产查询路径（scaffold 用）
 MODEL_ASSET_PATH = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets/{asset_id}"
@@ -503,6 +505,8 @@ def scaffold_deploy(
     instances: int = typer.Option(1, "--instances", "-n", help="实例数 (1-128)"),
     service_name: Optional[str] = typer.Option(None, "--name", help="服务名称"),
     edge_access_mode: str = typer.Option("ELB", "--edge-access-mode", help="边缘访问模式: ELB/NODE/MONITOR-GATEWAY"),
+    elb_id: Optional[str] = typer.Option(None, "--elb-id", help="负载均衡 ID（边缘 ELB 模式）"),
+    https_secrets: Optional[str] = typer.Option(None, "--https-secrets", help="HTTPS 证书 ID（边缘 NODE 模式）"),
     infer_version: Optional[str] = typer.Option(None, "--infer-version", help="推理版本，如 v1"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     output: str = typer.Option("deploy.yaml", "--output", "-o", help="输出文件路径"),
@@ -518,6 +522,7 @@ def scaffold_deploy(
     asset_detail = client.get(MODEL_ASSET_PATH, workspace_id=workspace, asset_id=asset_id)
     asset_type = asset_detail.get("asset_type", "")
     category = asset_detail.get("category", "pangu")
+    asset_name = asset_detail.get("name") or asset_detail.get("asset_name", "")
 
     # 2) 获取模型扩展信息 (3.12.3)，提取 Resource / Image / Action 信息
     ext_data = client.get(
@@ -577,6 +582,14 @@ def scaffold_deploy(
         elif device_type == "NPU":
             custom_spec["ascend"] = card_count
 
+    # 默认值兜底
+    if not custom_spec:
+        custom_spec = {"cpu": 4, "memory": 8192}
+        if device_type == "GPU":
+            custom_spec["gpu"] = 1
+        else:
+            custom_spec["ascend"] = 1
+
     # user_env 字段（Action 信息中的 action_env，字段名：env_name / default_value / data_type）
     action_env = action_info.get("action_env") or []
     user_env = []
@@ -591,9 +604,32 @@ def scaffold_deploy(
                 "env_type": "default",
             })
 
-    # 3) 构造模板
+    # 3) 自动查询边缘部署依赖资源
+    auto_elb_id = elb_id
+    auto_secrets = https_secrets
+    if infer_type == "edge":
+        if edge_access_mode == "ELB" and not auto_elb_id and pool_id:
+            try:
+                lb_data = client.get(EDGE_LB_PATH, workspace_id=workspace, params={"cluster_id": pool_id})
+                lbs = lb_data.get("load_balancers", [])
+                if lbs and isinstance(lbs[0], dict):
+                    auto_elb_id = lbs[0].get("id", "")
+                    console.print(f"[dim]已自动获取负载均衡: {auto_elb_id}[/dim]")
+            except Exception:
+                pass
+        if edge_access_mode == "NODE" and not auto_secrets:
+            try:
+                sec_data = client.get(SECRETS_PATH, workspace_id=workspace)
+                secs = sec_data.get("secrets", [])
+                if secs and isinstance(secs[0], dict):
+                    auto_secrets = secs[0].get("id", "")
+                    console.print(f"[dim]已自动获取证书: {auto_secrets}[/dim]")
+            except Exception:
+                pass
+
+    # 4) 构造模板
     template: dict = {
-        "service_name": service_name or "TODO-请填写服务名称（≤64字符）",
+        "service_name": service_name or asset_name or "TODO-请填写服务名称（≤64字符）",
         "service_desc": "",
         "asset_id": asset_id,
         "asset_type": asset_type or "TODO-NLP/CV/MM/Predict/AI4Science/Profession",
@@ -605,8 +641,8 @@ def scaffold_deploy(
         "service_config": {
             "instance_count": instances,
             "cluster_id": pool_id or "TODO-pangu pool list 获取资源池ID",
-            "specification": "custom" if custom_spec else "",
-            "custom_spec": custom_spec if custom_spec else {},
+            "specification": "custom",
+            "custom_spec": custom_spec,
         },
         "model_config": {},
     }
@@ -618,22 +654,23 @@ def scaffold_deploy(
     if infer_version:
         template["infer_version"] = infer_version
 
+    # user_env 无条件添加（online/edge 都可能需要）
+    if user_env:
+        template["service_config"]["user_env"] = user_env
+
     # 边缘部署特有字段
     if infer_type == "edge":
         template["service_config"]["edge_access_mode"] = edge_access_mode
         if edge_access_mode == "ELB":
-            template["service_config"]["elb_id"] = "TODO-边缘负载均衡ID"
+            template["service_config"]["elb_id"] = auto_elb_id or "TODO-执行 pangu service loadbalancers --cluster-id <pool_id> 获取"
         elif edge_access_mode == "NODE":
             template["service_config"]["edge_node_port"] = "TODO-30000~40000"
-        if user_env:
-            template["service_config"]["user_env"] = user_env
+            template["service_config"]["https_secrets"] = auto_secrets or "TODO-执行 pangu service secrets 获取证书ID"
 
     # 科学计算场景
     if asset_type == "AI4Science":
         template["request_mode"] = "async"
-        template["scene"] = "TODO-Weather/Precip/Ocean/..."
         template["model_config"] = {
-            "task_config": "TODO-从 model-detail 获取",
             "input_types": ["OBS"],
             "output_types": ["OBS"],
         }
@@ -882,3 +919,51 @@ def service_usage(
 
     data = client.get(USAGE_PATH, workspace_id=workspace, params=params or None)
     output(data, fmt=fmt)
+
+
+@app.command("secrets")
+def list_secrets(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+):
+    """查看边缘 HTTPS 证书列表（用于 NODE 模式部署）"""
+    client = PanguClient()
+    data = client.get(SECRETS_PATH, workspace_id=workspace)
+
+    secrets = data.get("secrets", [])
+    columns = [
+        ("id", "证书 ID"),
+        ("name", "名称"),
+        ("workspace_id", "工作空间"),
+        ("create_time", "创建时间"),
+    ]
+    output(secrets, fmt=fmt, columns=columns, title="HTTPS 证书", id_key="id")
+
+
+@app.command("loadbalancers")
+def list_loadbalancers(
+    cluster_id: str = typer.Option(..., "--cluster-id", help="边缘资源池 ID（pangu pool list --edge 获取）"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+):
+    """查看边缘负载均衡列表（用于 ELB 模式部署）"""
+    client = PanguClient()
+    params = {"cluster_id": cluster_id}
+    data = client.get(EDGE_LB_PATH, workspace_id=workspace, params=params)
+
+    lbs = data.get("load_balancers", [])
+    # 展平 host_ips 为字符串
+    for lb in lbs:
+        ips = lb.get("host_ips")
+        if isinstance(ips, list):
+            lb["host_ips"] = ", ".join(str(ip) for ip in ips)
+
+    columns = [
+        ("id", "负载均衡 ID"),
+        ("name", "名称"),
+        ("cluster_name", "资源池"),
+        ("scheme", "协议"),
+        ("status", "状态"),
+        ("host_ips", "IP 地址"),
+    ]
+    output(lbs, fmt=fmt, columns=columns, title="边缘负载均衡", status_key="status", id_key="id")

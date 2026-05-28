@@ -34,7 +34,7 @@ COLUMNS = [
 def list_pools(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     # HCS 参数
-    arch: str = typer.Option("X86", "--arch", help="[HCS] 架构类型: X86 | ARM"),
+    arch: Optional[str] = typer.Option(None, "--arch", help="[HCS] 架构类型: X86 | ARM（边缘资源池默认 ARM）"),
     device_type: Optional[str] = typer.Option(None, "--device-type", help="[HCS] 设备类型: GPU | NPU | NONE"),
     filter_status: Optional[str] = typer.Option(None, "--status", help="[HCS] 资源池状态: created (创建成功) | creating (创建中) | failed (创建失败，记录保留3天)"),
     # HC 参数
@@ -51,7 +51,7 @@ def list_pools(
     adapter = get_pool_adapter(client.config.env_type)
 
     req = PoolRequest(
-        arch=arch,
+        arch=arch or ("ARM" if edge else "X86"),
         device_type=device_type,
         status=filter_status,
         job_type=job_type,

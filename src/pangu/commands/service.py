@@ -24,7 +24,11 @@ MONITOR_PATH = DETAIL_PATH + "/monitors"
 TASKS_PATH = "/v1/{project_id}/model-service/tasks"
 USAGE_PATH = "/v1/{project_id}/workspaces/{workspace_id}/model-service/resource-usage"
 SECRETS_PATH = "/v1/{project_id}/services/secrets"
+SECRET_DETAIL_PATH = "/v1/{project_id}/services/secrets/{secret_id}"
 EDGE_LB_PATH = "/v1/{project_id}/services/edge/loadbalancers"
+LB_DETAIL_PATH = "/v1/{project_id}/services/edge/loadbalancers/{loadbalancer_id}"
+ACCESSPORT_PATH = "/v1/{project_id}/services/edge/accessport"
+ACCESSPORT_DETAIL_PATH = "/v1/{project_id}/services/edge/accessport/{accessport_id}"
 
 # 资产查询路径（scaffold 用）
 MODEL_ASSET_PATH = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets/{asset_id}"
@@ -610,7 +614,7 @@ def scaffold_deploy(
     if infer_type == "edge":
         if edge_access_mode == "ELB" and not auto_elb_id and pool_id:
             try:
-                lb_data = client.get(EDGE_LB_PATH, workspace_id=workspace, params={"cluster_id": pool_id})
+                lb_data = client.get(EDGE_LB_PATH, params={"workspace_id": "0", "cluster_id": pool_id}, endpoint_key="modelarts_endpoint")
                 lbs = lb_data.get("load_balancers", [])
                 if lbs and isinstance(lbs[0], dict):
                     auto_elb_id = lbs[0].get("id", "")
@@ -619,7 +623,7 @@ def scaffold_deploy(
                 pass
         if edge_access_mode == "NODE" and not auto_secrets:
             try:
-                sec_data = client.get(SECRETS_PATH, workspace_id=workspace)
+                sec_data = client.get(SECRETS_PATH, params={"workspace_id": "0"}, endpoint_key="modelarts_endpoint")
                 secs = sec_data.get("secrets", [])
                 if secs and isinstance(secs[0], dict):
                     auto_secrets = secs[0].get("id", "")
@@ -927,7 +931,7 @@ def list_secrets(
 ):
     """查看边缘 HTTPS 证书列表（用于 NODE 模式部署）"""
     client = PanguClient()
-    data = client.get(SECRETS_PATH, params={"workspace_id": "0"})
+    data = client.get(SECRETS_PATH, params={"workspace_id": "0"}, endpoint_key="modelarts_endpoint")
 
     secrets = data.get("secrets", [])
     columns = [
@@ -947,7 +951,7 @@ def list_loadbalancers(
     """查看边缘负载均衡列表（用于 ELB 模式部署）"""
     client = PanguClient()
     params = {"workspace_id": "0", "cluster_id": cluster_id}
-    data = client.get(EDGE_LB_PATH, params=params)
+    data = client.get(EDGE_LB_PATH, params=params, endpoint_key="modelarts_endpoint")
 
     lbs = data.get("load_balancers", [])
     # 展平 host_ips 为字符串
@@ -965,3 +969,59 @@ def list_loadbalancers(
         ("host_ips", "IP 地址"),
     ]
     output(lbs, fmt=fmt, columns=columns, title="边缘负载均衡", status_key="status", id_key="id")
+
+
+# ---- 负载均衡管理 ----
+
+@app.command("lb-get")
+def get_loadbalancer(
+    lb_id: str = typer.Argument(help="负载均衡 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+):
+    """查询负载均衡详情"""
+    client = PanguClient()
+    data = client.get(LB_DETAIL_PATH, endpoint_key="modelarts_endpoint", loadbalancer_id=lb_id)
+    output(data, fmt=fmt)
+
+
+# ---- 访问端口管理 ----
+
+@app.command("port-list")
+def list_ports(
+    fmt: str = typer.Option("table", "-o", "--output", help="输出格式"),
+):
+    """查询访问端口列表"""
+    client = PanguClient()
+    data = client.get(ACCESSPORT_PATH, endpoint_key="modelarts_endpoint")
+    ports = data.get("services", [])
+    columns = [
+        ("id", "ID"),
+        ("name", "名称"),
+        ("status", "状态"),
+    ]
+    output(ports, fmt=fmt, columns=columns, title="访问端口", status_key="status", id_key="id")
+
+
+@app.command("port-get")
+def get_port(
+    port_id: str = typer.Argument(help="访问端口 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+):
+    """查询访问端口详情"""
+    client = PanguClient()
+    data = client.get(ACCESSPORT_DETAIL_PATH, endpoint_key="modelarts_endpoint", accessport_id=port_id)
+    output(data, fmt=fmt)
+
+
+# ---- 密钥管理 ----
+
+@app.command("secret-get")
+def get_secret(
+    secret_id: str = typer.Argument(help="密钥 ID"),
+    fmt: str = typer.Option("json", "-o", "--output", help="输出格式"),
+):
+    """获取密钥详情"""
+    client = PanguClient()
+    data = client.get(SECRET_DETAIL_PATH, endpoint_key="modelarts_endpoint", secret_id=secret_id)
+    output(data, fmt=fmt)
+

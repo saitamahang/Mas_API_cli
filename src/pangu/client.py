@@ -43,7 +43,7 @@ class PanguClient:
             trust_env=self.config.use_system_proxy,
         )
 
-    def _build_url(self, path: str, **path_params: str) -> str:
+    def _build_url(self, path: str, endpoint_key: str = "endpoint", **path_params: str) -> str:
         """拼接完整 URL，替换路径变量"""
         # 自动填充 project_id
         if "{project_id}" in path and "project_id" not in path_params:
@@ -57,10 +57,10 @@ class PanguClient:
         for key, value in path_params.items():
             path = path.replace(f"{{{key}}}", value)
 
-        endpoint = self.config.endpoint
+        endpoint = getattr(self.config, endpoint_key, "")
         if not endpoint:
             raise ValueError(
-                "endpoint 未配置。请运行: pangu config set endpoint <域名>"
+                f"{endpoint_key} 未配置。请运行: pangu config set {endpoint_key} <域名>"
             )
 
         # 若 endpoint 已含协议头则直接使用，否则默认 https://
@@ -103,6 +103,7 @@ class PanguClient:
         params: Optional[dict] = None,
         json: Optional[dict] = None,
         extra_headers: Optional[dict] = None,
+        endpoint_key: str = "endpoint",
         **path_params: str,
     ) -> Any:
         """发起 API 请求
@@ -120,7 +121,7 @@ class PanguClient:
             wid = self.config.get_workspace_id(workspace_id)
             path_params["workspace_id"] = wid
 
-        url = self._build_url(path, **path_params)
+        url = self._build_url(path, endpoint_key=endpoint_key, **path_params)
         headers = self.auth.get_auth_headers()
         if extra_headers:
             headers.update(extra_headers)
@@ -139,17 +140,17 @@ class PanguClient:
 
         return self._handle_response(resp)
 
-    def get(self, path: str, workspace_id: Optional[str] = None, params: Optional[dict] = None, **kw: str) -> Any:
-        return self.request("GET", path, workspace_id=workspace_id, params=params, **kw)
+    def get(self, path: str, workspace_id: Optional[str] = None, params: Optional[dict] = None, endpoint_key: str = "endpoint", **kw: str) -> Any:
+        return self.request("GET", path, workspace_id=workspace_id, params=params, endpoint_key=endpoint_key, **kw)
 
-    def post(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, extra_headers: Optional[dict] = None, **kw: str) -> Any:
-        return self.request("POST", path, workspace_id=workspace_id, json=json, extra_headers=extra_headers, **kw)
+    def post(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, extra_headers: Optional[dict] = None, endpoint_key: str = "endpoint", **kw: str) -> Any:
+        return self.request("POST", path, workspace_id=workspace_id, json=json, extra_headers=extra_headers, endpoint_key=endpoint_key, **kw)
 
-    def put(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, **kw: str) -> Any:
-        return self.request("PUT", path, workspace_id=workspace_id, json=json, **kw)
+    def put(self, path: str, workspace_id: Optional[str] = None, json: Optional[dict] = None, endpoint_key: str = "endpoint", **kw: str) -> Any:
+        return self.request("PUT", path, workspace_id=workspace_id, json=json, endpoint_key=endpoint_key, **kw)
 
-    def delete(self, path: str, workspace_id: Optional[str] = None, params: Optional[dict] = None, **kw: str) -> Any:
-        return self.request("DELETE", path, workspace_id=workspace_id, params=params, **kw)
+    def delete(self, path: str, workspace_id: Optional[str] = None, params: Optional[dict] = None, endpoint_key: str = "endpoint", **kw: str) -> Any:
+        return self.request("DELETE", path, workspace_id=workspace_id, params=params, endpoint_key=endpoint_key, **kw)
 
     def wait_for_status(
         self,

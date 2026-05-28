@@ -20,6 +20,7 @@ class PanguConfig(BaseModel):
 
     # 环境连接
     endpoint: str = Field(default="", description="盘古服务外部 APIG 域名")
+    modelarts_endpoint: str = Field(default="", description="ModelArts 服务外部 APIG 域名")
     iam_endpoint: str = Field(default="", description="IAM 认证域名")
 
     # 身份信息

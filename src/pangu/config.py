@@ -74,7 +74,7 @@ class PanguConfig(BaseModel):
 
     def set(self, key: str, value: Any) -> None:
         """设置配置值"""
-        if not hasattr(self, key):
+        if key not in self.model_fields:
             raise KeyError(f"未知配置项: {key}")
         # 类型转换
         field_info = self.model_fields[key]

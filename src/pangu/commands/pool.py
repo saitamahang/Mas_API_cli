@@ -15,6 +15,7 @@ from pangu.output import output
 app = typer.Typer(help="资源池管理")
 console = Console()
 
+
 # 两个版本共用的展示列（normalize 后字段名统一）
 COLUMNS = [
     ("pool_id",    "资源池 ID"),
@@ -50,12 +51,17 @@ def list_pools(
     client  = PanguClient()
     adapter = get_pool_adapter(client.config.env_type)
 
+    # 边缘资源池只给推理用，不需要 status 和 job_type
+    effective_arch = arch or "ARM"
+    effective_status = filter_status
+    effective_job_type = None if edge else job_type
+
     req = PoolRequest(
-        arch=arch or ("ARM" if edge else "X86"),
+        arch=effective_arch,
         device_type=device_type,
-        status=filter_status,
-        job_type=job_type,
-        chip_types=chip_types,
+        status=effective_status,
+        job_type=effective_job_type,
+        chip_types=chip_types or None,
         use_type=use_type,
         flavor_ids=flavor_ids,
         asset_code=asset_code,

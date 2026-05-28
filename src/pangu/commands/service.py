@@ -927,7 +927,7 @@ def list_secrets(
 ):
     """查看边缘 HTTPS 证书列表（用于 NODE 模式部署）"""
     client = PanguClient()
-    data = client.get(SECRETS_PATH, workspace_id="0")
+    data = client.get(SECRETS_PATH, params={"workspace_id": "0"})
 
     secrets = data.get("secrets", [])
     columns = [
@@ -946,8 +946,8 @@ def list_loadbalancers(
 ):
     """查看边缘负载均衡列表（用于 ELB 模式部署）"""
     client = PanguClient()
-    params = {"cluster_id": cluster_id}
-    data = client.get(EDGE_LB_PATH, workspace_id="0", params=params)
+    params = {"workspace_id": "0", "cluster_id": cluster_id}
+    data = client.get(EDGE_LB_PATH, params=params)
 
     lbs = data.get("load_balancers", [])
     # 展平 host_ips 为字符串

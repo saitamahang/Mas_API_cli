@@ -153,13 +153,7 @@ def _paramdef_to_runtime(param: dict) -> dict:
     out = dict(param)
     if "value" in out:
         return out
-    if out.get("format") == "train_flavor" or out.get("name") == "train_flavor":
-        out["value"] = {
-            "flavor_id": "TODO-参考 model-detail 中 train_flavor 的取值范围，例 1*ascend-snt9b",
-            "pool_id":   "TODO-pangu pool list 获取 pool-xxxxx",
-        }
-    else:
-        out["value"] = out.get("default")
+    out["value"] = out.get("default")
     return out
 
 
@@ -227,7 +221,7 @@ def _build_task_parameter(workflow_info: dict, env_type: str = "HCS", dataset_ob
         for dr in data_reqs:
             if isinstance(dr, dict):
                 dr_copy = dict(dr)
-                obs_url = dataset_obs_url or "TODO-通过 pangu dataset get <dataset_name> 查询 sample_path，去掉 obs: 前缀保留 /，末尾加 /data.manifest"
+                obs_url = dataset_obs_url or ""
                 dr_copy["value"] = {"object_type": ["DIRECTORY"], "obs_url": obs_url}
                 dr_copy["realValue"] = {"object_type": ["DIRECTORY"], "obs_url": obs_url}
                 enriched.append(dr_copy)
@@ -341,16 +335,17 @@ def scaffold(
     model_source: str = typer.Option(..., "--model-source", help="(必填) " + HELP_MODEL_SRC_DETAIL),
     create_model_source: Optional[str] = typer.Option(None, "--create-model-source", help="写入 YAML 的 create 接口 model_source [可选] " + HELP_MODEL_SRC + "；不传则按 SYSTEM→pangu / USER→third 自动映射"),
     strategy: Optional[str] = typer.Option(None, "--strategy", help="策略 (可选)"),
-    asset_id: Optional[str] = typer.Option(None, "--asset-id", help="已知的 asset_id，直接填入模板；不传则留 TODO 占位"),
+    asset_id: str = typer.Option(..., "--asset-id", help="模型资产 ID，直接填入模板"),
     model_name: Optional[str] = typer.Option(None, "--model-name", help="模型名称 (可选)；不传则模板中不生成该字段"),
+    task_name: str = typer.Option(..., "--task-name", help="训练任务名称（中文/字母/数字/中划线/下划线，不以数字开头，≤64）"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     out_file: Optional[str] = typer.Option(None, "--out", help="写入到指定文件；不传则打印到 stdout (便于 `> train.yaml`)"),
-    dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="训练数据集名称，自动查询 dataset_id / dataset_version_id / OBS 路径并填充模板"),
+    dataset_name: str = typer.Option(..., "--dataset-name", help="训练数据集名称，自动查询 dataset_id / dataset_version_id / OBS 路径并填充模板"),
     dataset_catalog: str = typer.Option("ORIGINAL", "--dataset-catalog", help="数据集类别: ORIGINAL (导入产生) | PROCESS (加工产生) | PUBLISH (发布产生)"),
     eval_dataset_name: Optional[str] = typer.Option(None, "--eval-dataset-name", help="验证数据集名称，自动查询 eval_dataset_id 等并填充模板"),
     eval_dataset_catalog: str = typer.Option("ORIGINAL", "--eval-dataset-catalog", help="验证数据集类别: ORIGINAL | PROCESS | PUBLISH"),
-    pool_id: Optional[str] = typer.Option(None, "--pool-id", help="资源池 ID，HCS 下直接写入模板"),
-    chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下直接写入模板"),
+    pool_id: str = typer.Option(..., "--pool-id", help="资源池 ID，HCS 下直接写入模板；HC 下用于查询并填充 train_flavor"),
+    chip_type: Optional[str] = typer.Option(None, "--chip-type", help="资源规格类型，如 Snt9B3 / Snt9B4，HCS 下必填"),
     cards: int = typer.Option(1, "--cards", help="单节点卡数：1|2|4|8，决定 flavor_id"),
     nodes: int = typer.Option(1, "--nodes", help="节点数，默认 1；仅在 8 卡时允许 >1"),
     auto_publish: bool = typer.Option(False, "--auto-publish/--no-auto-publish", help="训练完成后自动发布为模型版本，默认关闭"),
@@ -358,11 +353,7 @@ def scaffold(
     publish_desc: Optional[str] = typer.Option(None, "--publish-desc", help="自动发布时的模型描述"),
     visibility: str = typer.Option("current", "--visibility", help="发布可见性: current(本空间) | all(全空间) | <workspace_id>(指定空间)"),
 ):
-    """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）
-
-    内部调用 model-detail 拿到 workflow_info.parameters 作为 task_parameter，
-    其余必填字段用 TODO 占位。生成后只需补齐 asset_id / task_name / 资源配置即可提交。
-    """
+    """生成训练任务 YAML 模板（含 task_parameter，可直接改后喂给 create）"""
     client = PanguClient()
     detail_body: dict = {
         "model_id":     model_id,
@@ -441,14 +432,16 @@ def scaffold(
         body_model_source = model_source  # 兜底：用户传了非标值也透传
 
 
-    # 根据 model-detail 返回，先取若干字段做默认占位（避免 user 漏传）
-    suggested_asset_id = asset_id or detail.get("asset_id") or "TODO-pangu model list 获取 asset_id"
+    # HCS 下 chip_type 必填校验
+    if env_type != "HC" and not chip_type:
+        console.print("[red]HCS 环境下 --chip-type 必填（如 Snt9B3 / Snt9B4）[/red]")
+        raise typer.Exit(1)
 
-    # 公共骨架：3.13.5 PDF 中所有顶层可选字段都列上 TODO，让用户清楚有哪些选项
+    # 公共骨架
     common_top: dict = {
         "_generated_by":          "scaffold",  # 内部标记，create 成功后自动清理配置文件
-        "task_name":              "TODO-请填写任务名称（中文/字母/数字/中划线/下划线，不以数字开头，≤64）",
-        "asset_id":               suggested_asset_id,
+        "task_name":              task_name,
+        "asset_id":               asset_id,
         "model_type":             model_type,
         "train_type":             train_type,
         "model_source":           body_model_source,
@@ -530,16 +523,15 @@ def scaffold(
         training_unit = common_top.get("training_unit", 1)
         common_top["pool_node_count"] = 2 if training_unit == 16 else 1
 
-        # 如传了 --pool-id 且查询成功，填充真实资源池信息
+        # 填充真实资源池信息
         tf_flavor = flavor_id
-        tf_pool   = pool_info.get("pool_id") or "TODO-pangu pool list 获取 pool-xxxxx"
+        tf_pool   = pool_info.get("pool_id") or pool_id
         common_top["task_parameter"]["parameters"] = _inject_train_flavor(parameters, flavor_id=tf_flavor, pool_id=tf_pool)
         skeleton = common_top
     else:
         # HCS：资源池走顶层 resource_config + pool_node_count / flavor / t_flops
-        # HCS 下不走查询资源池逻辑，直接写入 pool_id / flavor_id / chip_type
-        pool_id_val   = pool_id or "TODO-pangu pool list 获取 pool-xxxxx (专属池必填，公共池留空字符串)"
-        chip_type_val = chip_type or "TODO-如 Snt9B3 / Snt9B4"
+        pool_id_val   = pool_id
+        chip_type_val = chip_type
         flavor_id_val = flavor_id
         pool_node_count_val = nodes
         t_flops_val = cards * pool_node_count_val * 313
@@ -576,7 +568,7 @@ def scaffold(
             f"{len(task_parameter['data_requirements'])} 个数据要求项）[/green]"
         )
         console.print(
-            "[cyan]下一步：编辑其中 TODO 项（必填字段标注在 PDF §3.13.5），"
+            "[cyan]下一步：检查模板中各字段值是否符合预期，"
             f"然后 `pangu training create -f {out_file} --dry-run` 预览[/cyan]"
         )
     else:

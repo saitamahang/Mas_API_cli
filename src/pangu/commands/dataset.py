@@ -415,6 +415,7 @@ def publish_dataset(
         "OCEAN_WEATHER (气象) | CUSTOMIZATION (自定义)"
     )),
     publish_format: str = typer.Option("PANGU", "--publish-format", help="发布格式: DEFAULT (标准格式) | PANGU (盘古格式，默认) | USER_DEFINED (自定义格式)"),
+    train_proportion: Optional[float] = typer.Option(None, "--train-proportion", help="训练集占数据记录条数的比例，取值 0-1（默认 1，即全部作为训练集）。物体检测、图像分类、异常检测、语义分割、实例分割、变化检测数据集支持该字段"),
     is_global: bool = typer.Option(False, "--global", help="全空间可见"),
     description: Optional[str] = typer.Option(None, "--description", "-d", help="描述"),
     config: Optional[str] = typer.Option(None, "--config", "-f", help="YAML 配置文件路径，命令行参数覆盖文件内值"),
@@ -451,6 +452,8 @@ def publish_dataset(
     }
     if description:    body["description"] = description
     body["publish_format"] = publish_format
+    if train_proportion is not None:
+        body["train_proportion"] = train_proportion
 
     if config:
         p = Path(config)

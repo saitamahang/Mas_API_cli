@@ -560,6 +560,19 @@ def scaffold(
         skeleton = common_top
 
     text = yaml.safe_dump(skeleton, allow_unicode=True, sort_keys=False)
+
+    # 打印模型超参列表，提示用户可在 create 时用 --param 覆盖
+    if parameters:
+        console.print("\n[bold]模型超参列表（可在 create 时用 --param name=value 覆盖）：[/bold]")
+        for p in parameters:
+            if isinstance(p, dict):
+                pname = p.get("name", "")
+                pval = p.get("value")
+                if pval is None:
+                    pval = p.get("default", "")
+                console.print(f"  [dim]{pname}[/dim] = {pval}")
+        console.print("[cyan]  示例: pangu training create -f train.yaml --param learning_rate=0.0005[/cyan]\n")
+
     if out_file:
         Path(out_file).write_text(text, encoding="utf-8")
         console.print(
@@ -623,6 +636,7 @@ def create_task(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="工作空间 ID"),
     wait: bool = typer.Option(False, "--wait", help="等待任务跑到终态 (completed/failed/stopped)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="只组装并打印请求体 (YAML)，不实际提交 API；skill 预检/调试用"),
+    override_params: Optional[List[str]] = typer.Option(None, "--param", help="覆盖 task_parameter.parameters 中的超参，格式 name=value，可多次传入"),
     fmt: str = typer.Option("table", "-o", "--output", help="输出格式: table | json | yaml"),
 ):
     """创建训练任务 (3.13.5)
@@ -789,6 +803,28 @@ def create_task(
             return [_strip_nulls(v) for v in obj]
         return obj
     body = _strip_nulls(body)
+
+    # --param 覆盖 task_parameter.parameters 中的超参
+    if override_params:
+        tp = body.setdefault("task_parameter", {})
+        params = tp.get("parameters") or []
+        overrides = {}
+        for pv in override_params:
+            if "=" not in pv:
+                console.print(f"[red]--param 格式错误: {pv}，应为 name=value[/red]")
+                raise typer.Exit(1)
+            k, v = pv.split("=", 1)
+            overrides[k] = v
+        covered = set()
+        for p in params:
+            if isinstance(p, dict):
+                pname = p.get("name", "")
+                if pname in overrides:
+                    p["value"] = overrides[pname]
+                    covered.add(pname)
+        for k in overrides:
+            if k not in covered:
+                console.print(f"[yellow]警告: 参数 '{k}' 不在 model-detail 返回的 parameters 中，已忽略[/yellow]")
 
     # 提取 scaffold 标记并移除，避免提交到 API
     body.pop("_generated_by", None)

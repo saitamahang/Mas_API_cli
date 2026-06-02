@@ -394,6 +394,16 @@ def import_data(
 
 # ------------------------------ publish ------------------------------
 
+# 以下数据集类型发布时必须传入 train_proportion
+_TRAIN_PROPORTION_REQUIRED_TYPES = {
+    "IMAGE_OBJECT_DETECTION",
+    "IMAGE_CLASSIFICATION",
+    "IMAGE_ANOMALY_DETECTION",
+    "IMAGE_SEMANTIC_SEGMENTATION",
+    "IMAGE_INSTANCE_SEGMENTATION",
+    "IMAGE_CHANGE_DETECTION",
+}
+
 @app.command("publish")
 def publish_dataset(
     publish_name: str = typer.Option(..., "--publish-name", help="发布后数据集名称（必填）"),
@@ -462,6 +472,14 @@ def publish_dataset(
             raise typer.Exit(1)
         with p.open(encoding="utf-8") as f:
             body.update(yaml.safe_load(f) or {})
+
+    # 强制校验：支持 train_proportion 的数据集类型必须传入该字段
+    if body.get("file_content_type") in _TRAIN_PROPORTION_REQUIRED_TYPES:
+        if body.get("train_proportion") is None:
+            console.print(
+                f"[red]file_content_type={body['file_content_type']} 的数据集发布时必须传入 --train-proportion（取值 0-1）[/red]"
+            )
+            raise typer.Exit(1)
 
     data = client.post(PUBLISH_JOBS_PATH, workspace_id=workspace, json=body)
     output(data, fmt=fmt)

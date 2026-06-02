@@ -439,7 +439,16 @@ def list_ext(
 
     # json/yaml 给 agent 原始数据；table/id 给人类看展平后的
     if fmt in ("json", "yaml"):
-        output(data, fmt=fmt)
+        if simple:
+            # 简洁模式：只保留 SIMPLE_COLUMNS 对应的字段
+            keep_keys = {k for k, _ in SIMPLE_COLUMNS}
+            simple_assets = [
+                {k: v for k, v in item.items() if k in keep_keys}
+                for item in flat_assets
+            ]
+            output({"total": data.get("total"), "assets": simple_assets}, fmt=fmt)
+        else:
+            output(data, fmt=fmt)
         return
 
     columns = SIMPLE_COLUMNS if simple else LIST_EXT_COLUMNS

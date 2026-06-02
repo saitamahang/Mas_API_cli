@@ -157,6 +157,18 @@ def _paramdef_to_runtime(param: dict) -> dict:
     return out
 
 
+def _parse_param_value(v: str):
+    """把 --param 传入的字符串值解析为最合适的 Python 类型。
+
+    使用 JSON 解析，因此数字/布尔/null/列表/对象都能正确识别；
+    解析失败则保持原字符串（适用于普通文本值）。
+    """
+    try:
+        return _json.loads(v)
+    except (_json.JSONDecodeError, ValueError):
+        return v
+
+
 def _fetch_dataset_info(client: PanguClient, dataset_name: str, catalog: str, workspace: Optional[str]) -> dict:
     """查询数据集详情，返回可用于填充模板的字段。"""
     try:
@@ -817,7 +829,7 @@ def create_task(
                 console.print(f"[red]--param 格式错误: {pv}，应为 name=value[/red]")
                 raise typer.Exit(1)
             k, v = pv.split("=", 1)
-            overrides[k] = v
+            overrides[k] = _parse_param_value(v)
         covered = set()
         for p in params:
             if isinstance(p, dict):

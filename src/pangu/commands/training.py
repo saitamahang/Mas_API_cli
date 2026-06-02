@@ -561,9 +561,9 @@ def scaffold(
 
     text = yaml.safe_dump(skeleton, allow_unicode=True, sort_keys=False)
 
-    # 打印模型超参列表，提示用户可在 create 时用 --param 覆盖
+    # 打印模型超参列表，主动询问是否修改
     if parameters:
-        console.print("\n[bold]模型超参列表（可在 create 时用 --param name=value 覆盖）：[/bold]")
+        console.print("\n[bold]模型超参列表（请确认是否需要修改）：[/bold]")
         for p in parameters:
             if isinstance(p, dict):
                 pname = p.get("name", "")
@@ -571,7 +571,9 @@ def scaffold(
                 if pval is None:
                     pval = p.get("default", "")
                 console.print(f"  [dim]{pname}[/dim] = {pval}")
-        console.print("[cyan]  示例: pangu training create -f train.yaml --param learning_rate=0.0005[/cyan]\n")
+        console.print("[yellow]  是否需要调整以上超参？[/yellow]")
+        console.print("[cyan]  - 如需修改，请在下一步告诉我要改哪个参数（例如：把 learning_rate 改成 0.0005）[/cyan]")
+        console.print(f"[cyan]  - 或在 create 时传入: pangu training create -f train.yaml --param name=value[/cyan]\n")
 
     if out_file:
         Path(out_file).write_text(text, encoding="utf-8")
@@ -581,7 +583,7 @@ def scaffold(
             f"{len(task_parameter['data_requirements'])} 个数据要求项）[/green]"
         )
         console.print(
-            "[cyan]下一步：检查模板中各字段值是否符合预期，"
+            "[cyan]下一步：请确认训练参数是否符合预期，"
             f"然后 `pangu training create -f {out_file} --dry-run` 预览[/cyan]"
         )
     else:

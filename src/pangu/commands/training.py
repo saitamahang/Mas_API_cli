@@ -566,7 +566,8 @@ def scaffold(
         console.print("\n[bold]模型超参列表（请确认是否需要修改）：[/bold]")
         for p in parameters:
             if isinstance(p, dict):
-                pname = p.get("name", "")
+                # model-detail 的参数可能用 format 而非 name 标识
+                pname = p.get("name") or p.get("format") or ""
                 pval = p.get("value")
                 if pval is None:
                     pval = p.get("default", "")
@@ -820,10 +821,13 @@ def create_task(
         covered = set()
         for p in params:
             if isinstance(p, dict):
-                pname = p.get("name", "")
-                if pname in overrides:
-                    p["value"] = overrides[pname]
-                    covered.add(pname)
+                # 同时匹配 name / format（model-detail 的参数可能用 format 标识）
+                for key in ("name", "format"):
+                    pname = p.get(key)
+                    if pname and pname in overrides and pname not in covered:
+                        p["value"] = overrides[pname]
+                        covered.add(pname)
+                        break
         for k in overrides:
             if k not in covered:
                 console.print(f"[yellow]警告: 参数 '{k}' 不在 model-detail 返回的 parameters 中，已忽略[/yellow]")

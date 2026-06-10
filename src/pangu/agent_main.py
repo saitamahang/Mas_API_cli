@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import traceback
 from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Any, List, Optional
@@ -15,6 +17,7 @@ from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
     RUNS_DIR,
     base_state,
+    gc_runs,
     load_state,
     load_yaml,
     save_state,
@@ -22,10 +25,12 @@ from pangu.agent.state import (
     sha256_file,
     yaml_has_todo,
 )
+from pangu.agent.training_params import resolve_training_override_from_body
 from pangu.agent.utils import extract_first_json, failure, print_json, run_quietly, success
 from pangu.auth import AuthManager
 from pangu.client import APIError, PanguClient
-from pangu.commands.service import deploy_service, get_service, scaffold_deploy
+from pangu.commands.model import DETAIL_PATH as MODEL_DETAIL_PATH, _extract_resource_info
+from pangu.commands.service import DETAIL_PATH as SERVICE_DETAIL_PATH, deploy_service, scaffold_deploy
 from pangu.commands.training import create_task, publish_model, scaffold as training_scaffold
 from pangu.config import PanguConfig
 
@@ -69,7 +74,10 @@ def _emit(factory):
         raise typer.Exit(1)
     except Exception as e:
         err = AgentError("unexpected_error", f"{type(e).__name__}: {e}", "inspect_error")
-        print_json(failure(err))
+        data = failure(err)
+        if os.environ.get("PANGU_AGENT_DEBUG"):
+            data["traceback"] = traceback.format_exc()
+        print_json(data)
         raise typer.Exit(1)
 
 
@@ -211,11 +219,13 @@ def _normalize_obs_path(obs_path: str) -> str:
 
 def _training_artifact_path(run_id: str) -> Path:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNS_DIR.chmod(0o700)
     return RUNS_DIR / f"{run_id}.train.yaml"
 
 
 def _deploy_artifact_path(run_id: str) -> Path:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNS_DIR.chmod(0o700)
     return RUNS_DIR / f"{run_id}.deploy.yaml"
 
 
@@ -230,6 +240,16 @@ def _require_artifact_hash(state: dict[str, Any], artifact_key: str) -> Path:
     if actual != expected:
         raise AgentError("artifact_changed_after_validate", "artifact 在 validate 后发生变化", "rerun_validate")
     return path
+
+
+def _resolve_training_override(
+    artifact: Path,
+    scenario: dict[str, Any],
+    param_key: str,
+    value: Any,
+) -> tuple[str, str]:
+    body = load_yaml(artifact)
+    return resolve_training_override_from_body(body, scenario, param_key, value)
 
 
 @app.command()
@@ -278,6 +298,12 @@ def doctor(json_output: bool = typer.Option(False, "--json", help="Accepted for 
 def scenarios(json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility")):
     """List supported agent-safe scenarios."""
     _emit(lambda: {"scenarios": list_scenarios(), "next_action": "choose_scenario"})
+
+
+@app.command("gc")
+def gc(max_age_hours: int = typer.Option(24, "--max-age-hours")):
+    """Delete expired local agent run states."""
+    _emit(lambda: {**gc_runs(max_age_hours=max_age_hours), "next_action": "continue"})
 
 
 @dataset_app.command("list")
@@ -603,6 +629,7 @@ def train_validate(
             raise AgentError("artifact_missing", "训练 YAML 不存在", "run_train_scaffold")
         scn = get_scenario(state["scenario"])
         bs = batch_size or scn["training"].get("default_batch_size", 1)
+        batch_param, batch_override = _resolve_training_override(artifact, scn, "batch_size", bs)
         output = run_quietly(
             create_task,
             config=str(artifact),
@@ -640,17 +667,18 @@ def train_validate(
             workspace=state.get("workspace_id"),
             wait=False,
             dry_run=True,
-            override_params=[f"batch_size={bs}"],
+            override_params=[batch_override],
             fmt="yaml",
         )
         state["validate_success"] = True
         state["artifact_hash"] = sha256_file(artifact)
-        state["validation"] = {"batch_size": bs}
+        state["validation"] = {"batch_size": bs, "batch_size_param": batch_param}
         save_state(state)
         return {
             "run_id": run_id,
             "train_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
+            "validated_overrides": [batch_override],
             "dry_run_output": output.strip(),
             "next_action": "train.submit",
         }
@@ -668,7 +696,21 @@ def train_submit(
     def run():
         state = load_state(run_id, expected_kind="training")
         artifact = _require_artifact_hash(state, "train_yaml")
-        bs = batch_size or state.get("validation", {}).get("batch_size") or 1
+        validation = state.get("validation") or {}
+        bs = validation.get("batch_size")
+        if batch_size is not None and batch_size != bs:
+            raise AgentError(
+                "submit_parameter_mismatch",
+                f"submit 的 batch_size={batch_size} 与 validate 的 batch_size={bs} 不一致",
+                "rerun_train_validate_with_batch_size",
+            )
+        batch_param = validation.get("batch_size_param")
+        if not batch_param or bs is None:
+            raise AgentError(
+                "missing_validated_training_override",
+                "缺少 validate 阶段确认过的训练参数覆盖记录",
+                "rerun_train_validate",
+            )
         output = run_quietly(
             create_task,
             config=str(artifact),
@@ -706,7 +748,7 @@ def train_submit(
             workspace=state.get("workspace_id"),
             wait=False,
             dry_run=False,
-            override_params=[f"batch_size={bs}"],
+            override_params=[f"{batch_param}={bs}"],
             fmt="json",
         )
         data = extract_first_json(output)
@@ -792,23 +834,23 @@ def deploy_plan(
     """Query deploy options and matching edge pools for an asset."""
 
     def run():
-        config, _, workspace_id = _config_and_client(workspace)
-        from pangu.commands.model import get_model
-
-        output = run_quietly(
-            get_model,
+        config, client, workspace_id = _config_and_client(workspace)
+        asset = client.get(
+            MODEL_DETAIL_PATH,
+            workspace_id=workspace_id,
             asset_id=asset_id,
-            workspace=workspace_id,
-            action_asset_tag=None,
-            all_actions=True,
-            show_resources=True,
-            fmt="json",
+            params={"is_all_action": "true"},
         )
-        data = extract_first_json(output)
-        options = data.get("deploy_options") or []
+        _, options = _extract_resource_info(asset)
+        for row in options:
+            chips = " ".join(f"--chip-type {ct}" for ct in row["chip_types"])
+            arch = f"--arch {row['arch']}" if row["arch"] else ""
+            if row["action_type"] == "EDGE-DEPLOY":
+                row["pool_cmd"] = f"pangu pool list {chips} {arch} --edge".strip()
+            else:
+                row["pool_cmd"] = f"pangu pool list {chips} {arch} --job-type Infer".strip()
         indexed_options = []
         all_pools = []
-        _, client, _ = _config_and_client(workspace_id)
         for opt_index, opt in enumerate(options, start=1):
             if not isinstance(opt, dict):
                 continue
@@ -1004,13 +1046,11 @@ def deploy_status(
     """Get deployment service status."""
 
     def run():
-        output = run_quietly(
-            get_service,
-            service_id=service_id,
-            workspace=workspace,
-            fmt="json",
-        )
-        data = extract_first_json(output)
+        _, client, workspace_id = _config_and_client(workspace)
+        data = client.get(SERVICE_DETAIL_PATH, workspace_id=workspace_id, service_id=service_id)
+        assets = data.get("assets", [])
+        if assets and isinstance(assets[0], dict) and "asset_type" not in data:
+            data["asset_type"] = assets[0].get("asset_type", "")
         return {"service": data, "next_action": "poll_until_running_or_failed"}
 
     _emit(run)

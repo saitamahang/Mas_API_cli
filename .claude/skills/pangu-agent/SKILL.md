@@ -19,7 +19,9 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - Use candidate indexes, not manually typed IDs, whenever a command accepts `--model`, `--dataset`, `--pool`, `--option`, or `--source`.
 - Every submit requires validate first.
 - If validate succeeds and a YAML file changes afterward, submit will fail; rerun validate.
+- If training validate used `--batch-size`, submit must use the same value or omit it. To change batch size, rerun validate first.
 - Never delete old templates. `pangu-agent` creates unique artifacts under `~/.pangu/agent_runs/`.
+- Clean expired local run state with `pangu-agent gc --max-age-hours 24` when old run IDs pile up.
 - If a command returns `ok: false`, follow its `next_action`; do not guess a replacement command.
 
 ## Dataset Workflow
@@ -107,12 +109,15 @@ pangu-agent train validate --run-id <run_id> --batch-size 1
 ```
 
 Only continue if `ok: true`.
+If validate returns `training_param_not_found`, stop and ask for the scenario parameter mapping to be updated.
 
 ### Submit
 
 ```bash
 pangu-agent train submit --run-id <run_id> --batch-size 1
 ```
+
+Use the same `--batch-size` value as validate. If the user wants a different batch size, rerun validate with the new value before submit.
 
 After submit, use:
 
@@ -188,4 +193,3 @@ Poll status until `running` or `failed`.
 - `cv_semantic_segmentation`
 
 Add a new scenario profile in code before using any scenario not listed by `pangu-agent scenarios --json`.
-

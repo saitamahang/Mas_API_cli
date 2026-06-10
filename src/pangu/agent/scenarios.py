@@ -44,6 +44,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "model_source_detail": "SYSTEM",
             "create_model_source": "pangu",
             "default_batch_size": 1,
+            "batch_size_param_names": ["batch_size", "batchSize"],
         },
     },
     "cv_object_detection": {
@@ -81,6 +82,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "model_source_detail": "SYSTEM",
             "create_model_source": "pangu",
             "default_batch_size": 1,
+            "batch_size_param_names": ["batch_size", "batchSize"],
         },
     },
     "cv_semantic_segmentation": {
@@ -118,15 +120,60 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "model_source_detail": "SYSTEM",
             "create_model_source": "pangu",
             "default_batch_size": 1,
+            "batch_size_param_names": ["batch_size", "batchSize"],
         },
     },
 }
+
+
+REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
+    ("label",),
+    ("capabilities",),
+    ("model_query", "type"),
+    ("model_query", "sub_type"),
+    ("model_query", "source"),
+    ("model_query", "asset_action"),
+    ("dataset", "modal"),
+    ("dataset", "import", "content_type"),
+    ("dataset", "import", "file_format"),
+    ("dataset", "publish", "file_content_type"),
+    ("dataset", "publish", "publish_format"),
+    ("dataset", "training_catalog"),
+    ("training", "model_type"),
+    ("training", "train_type"),
+    ("training", "model_source_detail"),
+    ("training", "create_model_source"),
+    ("training", "default_batch_size"),
+    ("training", "batch_size_param_names"),
+)
+
+
+def validate_scenario(name: str, scenario: dict[str, Any]) -> None:
+    """Validate one scenario profile before agent workflows depend on it."""
+    missing = []
+    for path in REQUIRED_PATHS:
+        current: Any = scenario
+        for key in path:
+            if not isinstance(current, dict) or key not in current or current[key] in (None, ""):
+                missing.append(".".join(path))
+                break
+            current = current[key]
+    names = scenario.get("training", {}).get("batch_size_param_names")
+    if not isinstance(names, list) or not all(isinstance(item, str) and item for item in names):
+        missing.append("training.batch_size_param_names")
+    if missing:
+        raise AgentError(
+            "invalid_scenario_profile",
+            f"场景 {name} 配置不完整: {', '.join(sorted(set(missing)))}",
+            "fix_scenario_profile",
+        )
 
 
 def list_scenarios() -> list[dict[str, Any]]:
     """Return a compact scenario listing."""
     rows = []
     for key, value in SCENARIOS.items():
+        validate_scenario(key, value)
         rows.append({
             "scenario": key,
             "label": value["label"],
@@ -143,5 +190,6 @@ def get_scenario(name: str) -> dict[str, Any]:
             f"不支持的场景: {name}",
             "run_scenarios_or_add_profile",
         )
-    return deepcopy(SCENARIOS[name])
-
+    scenario = deepcopy(SCENARIOS[name])
+    validate_scenario(name, scenario)
+    return scenario

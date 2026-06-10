@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from pangu.config import CONFIG_DIR
 
 
 RUNS_DIR = CONFIG_DIR / "agent_runs"
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 
 
 def now_utc() -> datetime:
@@ -26,15 +28,17 @@ def new_run_id(kind: str) -> str:
 
 
 def run_path(run_id: str) -> Path:
-    if "/" in run_id or ".." in run_id:
+    if not RUN_ID_RE.fullmatch(run_id):
         raise AgentError("invalid_run_id", f"非法 run_id: {run_id}", "rerun_plan")
     return RUNS_DIR / f"{run_id}.json"
 
 
 def save_state(state: dict[str, Any]) -> None:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNS_DIR.chmod(0o700)
     path = run_path(state["run_id"])
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.chmod(0o600)
 
 
 def load_state(run_id: str, expected_kind: str | None = None) -> dict[str, Any]:
@@ -103,3 +107,28 @@ def yaml_has_todo(path: str | Path) -> bool:
 def load_yaml(path: str | Path) -> Any:
     return yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
+
+def gc_runs(max_age_hours: int = 24) -> dict[str, Any]:
+    """Delete expired run-state files older than max_age_hours."""
+    if max_age_hours < 1:
+        raise AgentError("invalid_gc_age", "max_age_hours 必须大于等于 1", "pass_valid_max_age_hours")
+    if not RUNS_DIR.exists():
+        return {"runs_dir": str(RUNS_DIR), "deleted": [], "kept": 0}
+
+    cutoff = now_utc() - timedelta(hours=max_age_hours)
+    deleted: list[str] = []
+    kept = 0
+    for path in RUNS_DIR.glob("*.json"):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            expires_at = state.get("expires_at")
+            expired = bool(expires_at and datetime.fromisoformat(expires_at) < now_utc())
+            old = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) < cutoff
+            if expired and old:
+                path.unlink()
+                deleted.append(path.name)
+            else:
+                kept += 1
+        except Exception:
+            kept += 1
+    return {"runs_dir": str(RUNS_DIR), "deleted": deleted, "kept": kept}

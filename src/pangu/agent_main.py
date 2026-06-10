@@ -12,6 +12,18 @@ import typer
 
 from pangu.adapters import get_pool_adapter
 from pangu.adapters.base import PoolRequest
+from pangu.agent.approval import (
+    DEPLOY_SUBMIT_ACTION,
+    DEPLOY_SUBMIT_CONFIRM,
+    PUBLISH_MODEL_CONFIRM,
+    TRAIN_SUBMIT_ACTION,
+    TRAIN_SUBMIT_CONFIRM,
+    build_deploy_submit_summary,
+    build_training_submit_summary,
+    record_approval,
+    require_approval,
+    require_confirmation,
+)
 from pangu.agent.errors import AgentError
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
@@ -604,6 +616,7 @@ def train_scaffold(
         state["artifacts"]["train_yaml"] = str(artifact)
         state["validate_success"] = False
         state["artifact_hash"] = ""
+        state.pop("approval", None)
         save_state(state)
         return {
             "run_id": run_id,
@@ -673,13 +686,41 @@ def train_validate(
         state["validate_success"] = True
         state["artifact_hash"] = sha256_file(artifact)
         state["validation"] = {"batch_size": bs, "batch_size_param": batch_param}
+        state.pop("approval", None)
+        approval_summary = build_training_submit_summary(state)
         save_state(state)
         return {
             "run_id": run_id,
             "train_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
             "validated_overrides": [batch_override],
+            "approval_required": True,
+            "approval_summary": approval_summary,
+            "approval_confirm": TRAIN_SUBMIT_CONFIRM,
             "dry_run_output": output.strip(),
+            "next_action": "ask_user_submit_approval",
+        }
+
+    _emit(run)
+
+
+@train_app.command("approve")
+def train_approve(
+    run_id: str = typer.Option(..., "--run-id"),
+    confirm: Optional[str] = typer.Option(None, "--confirm"),
+):
+    """Record explicit user approval for a validated training submission."""
+
+    def run():
+        state = load_state(run_id, expected_kind="training")
+        _require_artifact_hash(state, "train_yaml")
+        require_confirmation(confirm, TRAIN_SUBMIT_CONFIRM)
+        summary = build_training_submit_summary(state)
+        approval = record_approval(state, TRAIN_SUBMIT_ACTION, summary, state["artifact_hash"])
+        save_state(state)
+        return {
+            "run_id": run_id,
+            "approval": approval,
             "next_action": "train.submit",
         }
 
@@ -696,6 +737,9 @@ def train_submit(
     def run():
         state = load_state(run_id, expected_kind="training")
         artifact = _require_artifact_hash(state, "train_yaml")
+        if state.get("submit_result"):
+            raise AgentError("already_submitted", "该 run 已提交过训练任务", "train.status")
+        require_approval(state, TRAIN_SUBMIT_ACTION, state["artifact_hash"])
         validation = state.get("validation") or {}
         bs = validation.get("batch_size")
         if batch_size is not None and batch_size != bs:
@@ -782,11 +826,13 @@ def train_publish(
     visibility: str = typer.Option("current", "--visibility"),
     category: str = typer.Option("pangu", "--category"),
     description: str = typer.Option("", "--description", "-d"),
+    confirm: Optional[str] = typer.Option(None, "--confirm"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
 ):
     """Publish a completed training task output as a model asset."""
 
     def run():
+        require_confirmation(confirm, PUBLISH_MODEL_CONFIRM)
         output = run_quietly(
             publish_model,
             task_id=task_id,
@@ -939,6 +985,7 @@ def deploy_scaffold(
         state["artifacts"]["deploy_yaml"] = str(artifact)
         state["validate_success"] = False
         state["artifact_hash"] = ""
+        state.pop("approval", None)
         save_state(state)
         return {
             "run_id": run_id,
@@ -979,11 +1026,39 @@ def deploy_validate(run_id: str = typer.Option(..., "--run-id")):
             )
         state["validate_success"] = True
         state["artifact_hash"] = sha256_file(artifact)
+        state.pop("approval", None)
+        approval_summary = build_deploy_submit_summary(state)
         save_state(state)
         return {
             "run_id": run_id,
             "deploy_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
+            "approval_required": True,
+            "approval_summary": approval_summary,
+            "approval_confirm": DEPLOY_SUBMIT_CONFIRM,
+            "next_action": "ask_user_deploy_approval",
+        }
+
+    _emit(run)
+
+
+@deploy_app.command("approve")
+def deploy_approve(
+    run_id: str = typer.Option(..., "--run-id"),
+    confirm: Optional[str] = typer.Option(None, "--confirm"),
+):
+    """Record explicit user approval for a validated deployment submission."""
+
+    def run():
+        state = load_state(run_id, expected_kind="deployment")
+        _require_artifact_hash(state, "deploy_yaml")
+        require_confirmation(confirm, DEPLOY_SUBMIT_CONFIRM)
+        summary = build_deploy_submit_summary(state)
+        approval = record_approval(state, DEPLOY_SUBMIT_ACTION, summary, state["artifact_hash"])
+        save_state(state)
+        return {
+            "run_id": run_id,
+            "approval": approval,
             "next_action": "deploy.submit",
         }
 
@@ -997,6 +1072,9 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
     def run():
         state = load_state(run_id, expected_kind="deployment")
         artifact = _require_artifact_hash(state, "deploy_yaml")
+        if state.get("submit_result"):
+            raise AgentError("already_submitted", "该 run 已提交过部署任务", "deploy.status")
+        require_approval(state, DEPLOY_SUBMIT_ACTION, state["artifact_hash"])
         output = run_quietly(
             deploy_service,
             config=str(artifact),

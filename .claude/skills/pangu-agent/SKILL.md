@@ -19,6 +19,7 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - Use candidate indexes, not manually typed IDs, whenever a command accepts `--model`, `--dataset`, `--pool`, `--option`, or `--source`.
 - Every submit requires validate first.
 - If validate succeeds and a YAML file changes afterward, submit will fail; rerun validate.
+- Training submit, model publish, and deployment submit require explicit user approval. Never run an `approve` command or pass `--confirm` until the user clearly approves the shown summary.
 - If training validate used `--batch-size`, submit must use the same value or omit it. To change batch size, rerun validate first.
 - Never delete old templates. `pangu-agent` creates unique artifacts under `~/.pangu/agent_runs/`.
 - Clean expired local run state with `pangu-agent gc --max-age-hours 24` when old run IDs pile up.
@@ -73,7 +74,7 @@ For CV image scenarios, use `--train-proportion` unless the command output says 
 Training follows exactly this state machine:
 
 ```text
-doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> validate -> submit
+doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> validate -> user approves -> approve -> submit
 ```
 
 ### Plan
@@ -110,6 +111,15 @@ pangu-agent train validate --run-id <run_id> --batch-size 1
 
 Only continue if `ok: true`.
 If validate returns `training_param_not_found`, stop and ask for the scenario parameter mapping to be updated.
+Show `approval_summary` to the user and ask whether to submit the training task. Do not continue without explicit approval.
+
+### Approve
+
+```bash
+pangu-agent train approve --run-id <run_id> --confirm submit-training
+```
+
+Only run this after the user approves the exact `approval_summary` returned by validate.
 
 ### Submit
 
@@ -133,8 +143,11 @@ When a task is completed and the user wants to publish:
 pangu-agent train publish \
   --task-id <task_id> \
   --asset-name <asset_name> \
-  --visibility current
+  --visibility current \
+  --confirm publish-model
 ```
+
+Only pass `--confirm publish-model` after the user explicitly agrees to publish the model asset.
 
 Resolve outputs for deployment with:
 
@@ -147,7 +160,7 @@ pangu-agent train published-assets --task-id <task_id> --json
 Deployment follows this state machine:
 
 ```text
-deploy plan -> user chooses option/pool -> scaffold -> validate -> submit
+deploy plan -> user chooses option/pool -> scaffold -> validate -> user approves -> approve -> submit
 ```
 
 ### Plan
@@ -176,6 +189,15 @@ pangu-agent deploy validate --run-id <run_id>
 ```
 
 Only continue if `ok: true`.
+Show `approval_summary` to the user and ask whether to deploy the inference service. Do not continue without explicit approval.
+
+### Approve
+
+```bash
+pangu-agent deploy approve --run-id <run_id> --confirm deploy-service
+```
+
+Only run this after the user approves the exact `approval_summary` returned by validate.
 
 ### Submit and Poll
 

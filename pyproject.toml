@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 pangu = "pangu.main:app"
+pangu-agent = "pangu.agent_main:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pangu"]

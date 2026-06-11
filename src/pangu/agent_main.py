@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import traceback
 from importlib.metadata import version as get_version
 from pathlib import Path
@@ -25,6 +26,15 @@ from pangu.agent.approval import (
     require_confirmation,
 )
 from pangu.agent.candidates import DEFAULT_PAGE_SIZE, candidate_page, page_metadata
+from pangu.agent.datasets import (
+    DATASET_JOB_FAILURE_STATUSES,
+    DATASET_JOB_SUCCESS_STATUSES,
+    READY_DATASET_STATUS,
+    dataset_identifier,
+    extract_job_id,
+    find_matching_dataset,
+    validate_training_dataset_ready,
+)
 from pangu.agent.errors import AgentError
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
@@ -158,6 +168,7 @@ def _query_datasets(
     catalog: str,
     limit: int = 100,
     name: Optional[str] = None,
+    status: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     ds = scenario["dataset"]
     content_type = (
@@ -178,6 +189,8 @@ def _query_datasets(
     }
     if name:
         params["name"] = name
+    if status:
+        params["status"] = status
     data = client.get(DATASET_LIST_PATH, workspace_id=workspace_id, params=params)
     datasets = (data.get("datasets") if isinstance(data, dict) else None) or []
     rows = []
@@ -231,6 +244,131 @@ def _query_pools(
         row["index"] = idx
         rows.append(row)
     return rows
+
+
+def _find_ready_training_dataset(
+    client: PanguClient,
+    workspace_id: str,
+    scenario: dict[str, Any],
+    *,
+    dataset_id: str = "",
+    name: str = "",
+    limit: int = 1000,
+) -> dict[str, Any] | None:
+    rows = _query_datasets(
+        client,
+        workspace_id,
+        scenario,
+        catalog=scenario["dataset"]["training_catalog"],
+        limit=limit,
+        name=name or None,
+        status=[READY_DATASET_STATUS],
+    )
+    match = find_matching_dataset(rows, dataset_id=dataset_id, name=name)
+    if not match:
+        return None
+    return validate_training_dataset_ready(match, scenario)
+
+
+def _ensure_training_dataset_ready(
+    client: PanguClient,
+    workspace_id: str,
+    scenario: dict[str, Any],
+    dataset_row: dict[str, Any],
+) -> dict[str, Any]:
+    dataset_id = dataset_identifier(dataset_row)
+    name = str(dataset_row.get("name") or "")
+    ready = _find_ready_training_dataset(
+        client,
+        workspace_id,
+        scenario,
+        dataset_id=dataset_id,
+        name=name,
+    )
+    if not ready:
+        raise AgentError(
+            "dataset_not_ready_for_training",
+            "所选数据集不是 ONLINE 的 PUBLISH 数据集，不能用于训练",
+            "dataset.publish-wait_or_choose_ready_dataset",
+            {
+                "dataset": {
+                    "id": dataset_id,
+                    "name": name,
+                    "catalog": dataset_row.get("catalog"),
+                    "status": dataset_row.get("status"),
+                    "content_type": dataset_row.get("content_type"),
+                },
+                "expected": {
+                    "catalog": scenario["dataset"]["training_catalog"],
+                    "status": READY_DATASET_STATUS,
+                    "content_type": scenario["dataset"].get("publish", {}).get("file_content_type"),
+                },
+            },
+        )
+    if dataset_row.get("index") is not None:
+        ready = dict(ready)
+        ready["index"] = dataset_row["index"]
+    return ready
+
+
+def _wait_for_published_dataset(
+    client: PanguClient,
+    workspace_id: str,
+    scenario: dict[str, Any],
+    publish_name: str,
+    *,
+    job_id: str = "",
+    interval: int = 10,
+    timeout: int = 3600,
+) -> dict[str, Any]:
+    if interval < 1:
+        raise AgentError("invalid_wait_interval", "interval 必须大于等于 1", "pass_valid_wait_interval")
+    if timeout < 1:
+        raise AgentError("invalid_wait_timeout", "timeout 必须大于等于 1", "pass_valid_wait_timeout")
+
+    deadline = time.time() + timeout
+    job_final = None
+    if job_id:
+        try:
+            job_final = client.wait_for_status(
+                PUBLISH_JOBS_PATH + f"/{job_id}",
+                target_statuses=DATASET_JOB_SUCCESS_STATUSES,
+                failure_statuses=DATASET_JOB_FAILURE_STATUSES,
+                status_key="status",
+                interval=interval,
+                timeout=timeout,
+                workspace_id=workspace_id,
+            )
+        except APIError as e:
+            job_final = {"status_check_error": str(e)}
+        except TimeoutError as e:
+            raise AgentError(
+                "dataset_publish_timeout",
+                str(e),
+                "retry_dataset_publish_wait_or_inspect_publish_status",
+                {"publish_name": publish_name, "job_id": job_id, "timeout": timeout},
+            ) from e
+        except RuntimeError as e:
+            raise AgentError(
+                "dataset_publish_failed",
+                str(e),
+                "inspect_dataset_publish_status",
+                {"publish_name": publish_name, "job_id": job_id},
+            ) from e
+
+    while True:
+        ready = _find_ready_training_dataset(client, workspace_id, scenario, name=publish_name)
+        if ready:
+            return {"job": job_final, "dataset": ready}
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise AgentError(
+                "dataset_publish_timeout",
+                f"等待发布数据集 ONLINE 超时: {publish_name}",
+                "retry_dataset_publish_wait_or_inspect_publish_status",
+                {"publish_name": publish_name, "job_id": job_id, "timeout": timeout},
+            )
+        time.sleep(min(interval, remaining))
 
 
 def _normalize_obs_path(obs_path: str) -> str:
@@ -417,10 +555,11 @@ def dataset_list(
     def run():
         scn = get_scenario(scenario)
         config, client, workspace_id = _config_and_client(workspace)
-        rows = _query_datasets(client, workspace_id, scn, catalog=catalog, limit=limit, name=name)
+        status = [READY_DATASET_STATUS] if catalog == scn["dataset"]["training_catalog"] else None
+        rows = _query_datasets(client, workspace_id, scn, catalog=catalog, limit=limit, name=name, status=status)
         state = base_state("dataset_list", scenario, config.env_type, workspace_id)
         state["catalog"] = catalog
-        state["filters"] = {"name": name, "limit": limit}
+        state["filters"] = {"name": name, "limit": limit, "status": status}
         state["datasets"] = rows
         save_state(state)
         page_data = candidate_page("datasets", rows, page=page, page_size=page_size)
@@ -520,10 +659,18 @@ def dataset_publish_prepare(
     def run():
         scn = get_scenario(scenario)
         config, client, workspace_id = _config_and_client(workspace)
-        sources = _query_datasets(client, workspace_id, scn, catalog=source_catalog, limit=limit, name=name)
+        sources = _query_datasets(
+            client,
+            workspace_id,
+            scn,
+            catalog=source_catalog,
+            limit=limit,
+            name=name,
+            status=[READY_DATASET_STATUS],
+        )
         state = base_state("dataset_publish", scenario, config.env_type, workspace_id)
         state["source_catalog"] = source_catalog
-        state["filters"] = {"name": name, "limit": limit}
+        state["filters"] = {"name": name, "limit": limit, "status": [READY_DATASET_STATUS]}
         state["sources"] = sources
         save_state(state)
         page_data = candidate_page("sources", sources, page=page, page_size=page_size)
@@ -601,18 +748,127 @@ def dataset_publish_validate(
 
 
 @dataset_app.command("publish-submit")
-def dataset_publish_submit(run_id: str = typer.Option(..., "--run-id")):
+def dataset_publish_submit(
+    run_id: str = typer.Option(..., "--run-id"),
+    wait: bool = typer.Option(False, "--wait"),
+    interval: int = typer.Option(10, "--interval"),
+    timeout: int = typer.Option(3600, "--timeout"),
+):
     """Submit a previously validated dataset publish request."""
 
     def run():
         state = load_state(run_id, expected_kind="dataset_publish")
         if not state.get("validate_success"):
             raise AgentError("submit_without_validate", "publish-submit 前必须先 publish-validate", "run_publish_validate")
+        scn = get_scenario(state["scenario"])
         _, client, workspace_id = _config_and_client(state.get("workspace_id"))
         data = client.post(PUBLISH_JOBS_PATH, workspace_id=workspace_id, json=state["request_body"])
+        job_id = extract_job_id(data)
+        final = None
+        ready_dataset = None
+        if wait:
+            final = _wait_for_published_dataset(
+                client,
+                workspace_id,
+                scn,
+                state["request_body"]["publish_name"],
+                job_id=job_id,
+                interval=interval,
+                timeout=timeout,
+            )
+            ready_dataset = final["dataset"]
         state["submit_result"] = data
+        state["job_id"] = job_id
+        if final:
+            state["final"] = final
+        if ready_dataset:
+            state["published_dataset"] = ready_dataset
         save_state(state)
-        return {"job": data, "next_action": "train.plan"}
+        return {
+            "job": data,
+            "job_id": job_id,
+            "final": final,
+            "published_dataset": ready_dataset,
+            "next_action": "train.plan" if ready_dataset else "dataset.publish-wait",
+            "wait_command": "" if ready_dataset else f"pangu-agent dataset publish-wait --run-id {run_id} --json",
+        }
+
+    _emit(run)
+
+
+@dataset_app.command("publish-status")
+def dataset_publish_status(
+    run_id: str = typer.Option(..., "--run-id"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Check a submitted dataset publish job and published dataset readiness."""
+
+    def run():
+        state = load_state(run_id, expected_kind="dataset_publish")
+        if not state.get("submit_result"):
+            raise AgentError("publish_not_submitted", "发布任务尚未提交", "run_dataset_publish_submit")
+        scn = get_scenario(state["scenario"])
+        _, client, workspace_id = _config_and_client(state.get("workspace_id"))
+        job_id = state.get("job_id") or extract_job_id(state.get("submit_result"))
+        job = None
+        if job_id:
+            try:
+                job = client.get(PUBLISH_JOBS_PATH + f"/{job_id}", workspace_id=workspace_id)
+            except APIError as e:
+                job = {"status_check_error": str(e)}
+        publish_name = state["request_body"]["publish_name"]
+        ready_dataset = _find_ready_training_dataset(client, workspace_id, scn, name=publish_name)
+        if ready_dataset:
+            state["published_dataset"] = ready_dataset
+            save_state(state)
+        return {
+            "run_id": run_id,
+            "job_id": job_id,
+            "job": job,
+            "dataset_ready": bool(ready_dataset),
+            "published_dataset": ready_dataset,
+            "next_action": "train.plan" if ready_dataset else "dataset.publish-wait",
+        }
+
+    _emit(run)
+
+
+@dataset_app.command("publish-wait")
+def dataset_publish_wait(
+    run_id: str = typer.Option(..., "--run-id"),
+    interval: int = typer.Option(10, "--interval"),
+    timeout: int = typer.Option(3600, "--timeout"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Wait until a submitted dataset publish job produces an ONLINE PUBLISH dataset."""
+
+    def run():
+        state = load_state(run_id, expected_kind="dataset_publish")
+        if not state.get("submit_result"):
+            raise AgentError("publish_not_submitted", "发布任务尚未提交", "run_dataset_publish_submit")
+        scn = get_scenario(state["scenario"])
+        _, client, workspace_id = _config_and_client(state.get("workspace_id"))
+        job_id = state.get("job_id") or extract_job_id(state.get("submit_result"))
+        final = _wait_for_published_dataset(
+            client,
+            workspace_id,
+            scn,
+            state["request_body"]["publish_name"],
+            job_id=job_id,
+            interval=interval,
+            timeout=timeout,
+        )
+        state["job_id"] = job_id
+        state["final"] = final
+        state["published_dataset"] = final["dataset"]
+        save_state(state)
+        return {
+            "run_id": run_id,
+            "job_id": job_id,
+            "final": final,
+            "published_dataset": final["dataset"],
+            "next_action": "train.plan",
+        }
 
     _emit(run)
 
@@ -639,13 +895,14 @@ def train_plan(
             catalog=scn["dataset"]["training_catalog"],
             limit=limit,
             name=dataset_name,
+            status=[READY_DATASET_STATUS],
         )
         pools = _query_pools(client, workspace_id, config.env_type, purpose="train")
         state = base_state("training", scenario, config.env_type, workspace_id)
         state["models"] = models
         state["datasets"] = datasets
         state["pools"] = pools
-        state["filters"] = {"limit": limit, "dataset_name": dataset_name}
+        state["filters"] = {"limit": limit, "dataset_name": dataset_name, "dataset_status": [READY_DATASET_STATUS]}
         save_state(state)
         next_action = "choose_model_dataset_pool"
         if not models:
@@ -695,6 +952,8 @@ def train_scaffold(
         model_row = select_index(state, "models", model)
         dataset_row = select_index(state, "datasets", dataset)
         pool_row = select_index(state, "pools", pool)
+        _, client, workspace_id = _config_and_client(state.get("workspace_id"))
+        dataset_row = _ensure_training_dataset_ready(client, workspace_id, scn, dataset_row)
         artifact = _training_artifact_path(run_id)
         env_type = state["env_type"]
         chip_type = pool_row.get("chip_type") or pool_row.get("processor") or ""
@@ -801,6 +1060,8 @@ def train_validate(
         body = load_yaml(artifact)
         context = validate_training_context(state, body)
         scn = get_scenario(state["scenario"])
+        _, client, workspace_id = _config_and_client(state.get("workspace_id"))
+        _ensure_training_dataset_ready(client, workspace_id, scn, state.get("selection", {}).get("dataset") or {})
         overrides, validation = _resolve_training_overrides(artifact, scn, batch_size, override_params)
         wrapped_override_params = [item["override"] for item in overrides]
         output = run_quietly(
@@ -904,6 +1165,9 @@ def train_submit(
         state = load_state(run_id, expected_kind="training")
         artifact = _require_artifact_hash(state, "train_yaml")
         validate_training_context(state, load_yaml(artifact))
+        scn = get_scenario(state["scenario"])
+        _, client, workspace_id = _config_and_client(state.get("workspace_id"))
+        _ensure_training_dataset_ready(client, workspace_id, scn, state.get("selection", {}).get("dataset") or {})
         if state.get("submit_result"):
             raise AgentError("already_submitted", "该 run 已提交过训练任务", "train.status")
         require_approval(state, TRAIN_SUBMIT_ACTION, state["artifact_hash"])

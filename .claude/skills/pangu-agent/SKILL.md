@@ -26,6 +26,7 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - Do not edit generated training YAML for hyperparameter changes. Use `train params` and `train validate --param` instead.
 - Training submit reuses validate-time hyperparameter overrides. To change batch size or any other hyperparameter, rerun validate first.
 - Model, dataset, pool, and cards form one atomic training context. If any of them changes, rerun `train scaffold`, then rerun `train params -> validate -> approve -> submit`.
+- Training datasets must be `catalog=PUBLISH` and `status=ONLINE`. If dataset publish was just submitted, wait for publish completion before training.
 - Never delete old templates. `pangu-agent` creates unique artifacts under `~/.pangu/agent_runs/`.
 - Clean expired local run state with `pangu-agent gc --max-age-hours 24` when old run IDs pile up.
 - If a command returns `ok: false`, follow its `next_action`; do not guess a replacement command.
@@ -40,7 +41,7 @@ Use this when the user needs to find, import, or publish training data.
 pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --limit 1000 --page-size 20 --json
 ```
 
-If no `PUBLISH` dataset exists, prepare data first.
+This lists only ready training datasets for the scenario. If no `PUBLISH`/`ONLINE` dataset exists, prepare and publish data first.
 If `has_more: true`, page through results or filter by name:
 
 ```bash
@@ -77,11 +78,12 @@ pangu-agent dataset publish-validate \
   --source <index> \
   --train-proportion 0.8
 
-pangu-agent dataset publish-submit --run-id <run_id>
+pangu-agent dataset publish-submit --run-id <run_id> --wait
 ```
 
 For CV image scenarios, use `--train-proportion` unless the command output says otherwise.
 If `publish-prepare` returns `has_more: true`, use `pangu-agent candidates --run-id <run_id> --kind sources --page <n> --page-size 20 --json`.
+If `publish-submit` was run without `--wait`, run `pangu-agent dataset publish-wait --run-id <run_id> --json` before training. Do not continue to `train plan` until the published dataset is reported ready.
 
 ## Training Workflow
 
@@ -111,6 +113,7 @@ pangu-agent candidates --run-id <run_id> --kind datasets --page 2 --page-size 20
 ```
 
 Use `--dataset-name <keyword>` on `train plan` when the user provides a dataset name hint.
+If the desired existing dataset is not returned, do not select it by hand; it is either not `PUBLISH`, not `ONLINE`, not the scenario content type, or outside the current filters.
 
 ### Scaffold
 

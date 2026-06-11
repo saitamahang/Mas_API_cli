@@ -83,7 +83,7 @@ pangu-agent dataset publish-submit --run-id <run_id> --wait
 
 For CV image scenarios, use `--train-proportion` unless the command output says otherwise.
 If `publish-prepare` returns `has_more: true`, use `pangu-agent candidates --run-id <run_id> --kind sources --page <n> --page-size 20 --json`.
-If `publish-submit` was run without `--wait`, run `pangu-agent dataset publish-wait --run-id <run_id> --json` before training. Do not continue to `train plan` until the published dataset is reported ready.
+If `publish-submit` was run without `--wait`, run `pangu-agent dataset publish-wait --run-id <run_id> --json` before training. Publish wait uses the same readiness signal as `pangu dataset get <publish_name> -c PUBLISH`: the published dataset must be `ONLINE`. Do not continue to `train plan` until the published dataset is reported ready.
 
 ## Training Workflow
 

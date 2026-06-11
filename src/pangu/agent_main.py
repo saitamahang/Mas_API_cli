@@ -29,7 +29,6 @@ from pangu.agent.approval import (
 from pangu.agent.candidates import DEFAULT_PAGE_SIZE, candidate_page, page_metadata
 from pangu.agent.datasets import (
     DATASET_JOB_FAILURE_STATUSES,
-    DATASET_JOB_SUCCESS_STATUSES,
     READY_DATASET_STATUS,
     dataset_identifier,
     extract_job_id,
@@ -87,6 +86,7 @@ app.add_typer(skill_app, name="skill")
 
 MODEL_EXT_PATH = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets-ext"
 DATASET_LIST_PATH = "/v2/{project_id}/workspaces/{workspace_id}/data-management/datasets"
+DATASET_DETAIL_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-management/dataset/{dataset_name}"
 IMPORT_JOBS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-extraction/import-jobs"
 PUBLISH_JOBS_PATH = "/v1/{project_id}/workspaces/{workspace_id}/data-publish/jobs"
 TRAIN_TASK_PATH = "/v1/{project_id}/workspaces/{workspace_id}/model-train/train-task/{task_id}"
@@ -205,6 +205,27 @@ def _query_datasets(
     return rows
 
 
+def _get_dataset_detail(
+    client: PanguClient,
+    workspace_id: str,
+    *,
+    name: str,
+    catalog: str,
+) -> dict[str, Any]:
+    data = client.get(
+        DATASET_DETAIL_PATH,
+        workspace_id=workspace_id,
+        params={"catalog": catalog},
+        dataset_name=name,
+    )
+    if not isinstance(data, dict):
+        return {}
+    row = dict(data)
+    row.setdefault("name", name)
+    row.setdefault("catalog", catalog)
+    return row
+
+
 def _query_pools(
     client: PanguClient,
     workspace_id: str,
@@ -258,11 +279,26 @@ def _find_ready_training_dataset(
     name: str = "",
     limit: int = 1000,
 ) -> dict[str, Any] | None:
+    training_catalog = scenario["dataset"]["training_catalog"]
+    if name:
+        try:
+            detail = _get_dataset_detail(client, workspace_id, name=name, catalog=training_catalog)
+        except APIError:
+            detail = {}
+        if detail:
+            detail_id = dataset_identifier(detail)
+            if dataset_id and detail_id and detail_id != dataset_id:
+                return None
+            try:
+                return validate_training_dataset_ready(detail, scenario)
+            except AgentError:
+                return None
+
     rows = _query_datasets(
         client,
         workspace_id,
         scenario,
-        catalog=scenario["dataset"]["training_catalog"],
+        catalog=training_catalog,
         limit=limit,
         name=name or None,
         status=[READY_DATASET_STATUS],
@@ -330,46 +366,39 @@ def _wait_for_published_dataset(
         raise AgentError("invalid_wait_timeout", "timeout 必须大于等于 1", "pass_valid_wait_timeout")
 
     deadline = time.time() + timeout
-    job_final = None
-    if job_id:
-        try:
-            job_final = client.wait_for_status(
-                PUBLISH_JOBS_PATH + f"/{job_id}",
-                target_statuses=DATASET_JOB_SUCCESS_STATUSES,
-                failure_statuses=DATASET_JOB_FAILURE_STATUSES,
-                status_key="status",
-                interval=interval,
-                timeout=timeout,
-                workspace_id=workspace_id,
-            )
-        except APIError as e:
-            job_final = {"status_check_error": str(e)}
-        except TimeoutError as e:
-            raise AgentError(
-                "dataset_publish_timeout",
-                str(e),
-                "retry_dataset_publish_wait_or_inspect_publish_status",
-                {"publish_name": publish_name, "job_id": job_id, "timeout": timeout},
-            ) from e
-        except RuntimeError as e:
-            raise AgentError(
-                "dataset_publish_failed",
-                str(e),
-                "inspect_dataset_publish_status",
-                {"publish_name": publish_name, "job_id": job_id},
-            ) from e
-
+    publish_status = None
     while True:
         ready = _find_ready_training_dataset(client, workspace_id, scenario, name=publish_name)
         if ready:
-            return {"job": job_final, "dataset": ready}
+            return {
+                "publish_request": {"id": job_id},
+                "publish_status": publish_status,
+                "dataset": ready,
+            }
+        if job_id:
+            try:
+                publish_status = client.get(PUBLISH_JOBS_PATH + f"/{job_id}", workspace_id=workspace_id)
+            except APIError as e:
+                publish_status = {"status_check_error": str(e)}
+            if isinstance(publish_status, dict) and publish_status.get("status") in DATASET_JOB_FAILURE_STATUSES:
+                raise AgentError(
+                    "dataset_publish_failed",
+                    f"发布请求进入失败状态: {publish_status.get('status')}",
+                    "inspect_dataset_publish_status",
+                    {"publish_name": publish_name, "publish_request_id": job_id, "publish_status": publish_status},
+                )
         remaining = deadline - time.time()
         if remaining <= 0:
             raise AgentError(
                 "dataset_publish_timeout",
                 f"等待发布数据集 ONLINE 超时: {publish_name}",
                 "retry_dataset_publish_wait_or_inspect_publish_status",
-                {"publish_name": publish_name, "job_id": job_id, "timeout": timeout},
+                {
+                    "publish_name": publish_name,
+                    "publish_request_id": job_id,
+                    "timeout": timeout,
+                    "publish_status": publish_status,
+                },
             )
         time.sleep(min(interval, remaining))
 
@@ -782,14 +811,15 @@ def dataset_publish_submit(
             ready_dataset = final["dataset"]
         state["submit_result"] = data
         state["job_id"] = job_id
+        state["publish_request_id"] = job_id
         if final:
             state["final"] = final
         if ready_dataset:
             state["published_dataset"] = ready_dataset
         save_state(state)
         return {
-            "job": data,
-            "job_id": job_id,
+            "publish_request": data,
+            "publish_request_id": job_id,
             "final": final,
             "published_dataset": ready_dataset,
             "next_action": "train.plan" if ready_dataset else "dataset.publish-wait",
@@ -804,7 +834,7 @@ def dataset_publish_status(
     run_id: str = typer.Option(..., "--run-id"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
-    """Check a submitted dataset publish job and published dataset readiness."""
+    """Check a submitted dataset publish request and published dataset readiness."""
 
     def run():
         state = load_state(run_id, expected_kind="dataset_publish")
@@ -812,13 +842,13 @@ def dataset_publish_status(
             raise AgentError("publish_not_submitted", "发布任务尚未提交", "run_dataset_publish_submit")
         scn = get_scenario(state["scenario"])
         _, client, workspace_id = _config_and_client(state.get("workspace_id"))
-        job_id = state.get("job_id") or extract_job_id(state.get("submit_result"))
-        job = None
-        if job_id:
+        publish_request_id = state.get("publish_request_id") or state.get("job_id") or extract_job_id(state.get("submit_result"))
+        publish_status = None
+        if publish_request_id:
             try:
-                job = client.get(PUBLISH_JOBS_PATH + f"/{job_id}", workspace_id=workspace_id)
+                publish_status = client.get(PUBLISH_JOBS_PATH + f"/{publish_request_id}", workspace_id=workspace_id)
             except APIError as e:
-                job = {"status_check_error": str(e)}
+                publish_status = {"status_check_error": str(e)}
         publish_name = state["request_body"]["publish_name"]
         ready_dataset = _find_ready_training_dataset(client, workspace_id, scn, name=publish_name)
         if ready_dataset:
@@ -826,8 +856,8 @@ def dataset_publish_status(
             save_state(state)
         return {
             "run_id": run_id,
-            "job_id": job_id,
-            "job": job,
+            "publish_request_id": publish_request_id,
+            "publish_status": publish_status,
             "dataset_ready": bool(ready_dataset),
             "published_dataset": ready_dataset,
             "next_action": "train.plan" if ready_dataset else "dataset.publish-wait",
@@ -843,7 +873,7 @@ def dataset_publish_wait(
     timeout: int = typer.Option(3600, "--timeout"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
-    """Wait until a submitted dataset publish job produces an ONLINE PUBLISH dataset."""
+    """Wait until a submitted dataset publish request produces an ONLINE PUBLISH dataset."""
 
     def run():
         state = load_state(run_id, expected_kind="dataset_publish")
@@ -851,7 +881,7 @@ def dataset_publish_wait(
             raise AgentError("publish_not_submitted", "发布任务尚未提交", "run_dataset_publish_submit")
         scn = get_scenario(state["scenario"])
         _, client, workspace_id = _config_and_client(state.get("workspace_id"))
-        job_id = state.get("job_id") or extract_job_id(state.get("submit_result"))
+        job_id = state.get("publish_request_id") or state.get("job_id") or extract_job_id(state.get("submit_result"))
         final = _wait_for_published_dataset(
             client,
             workspace_id,
@@ -862,12 +892,13 @@ def dataset_publish_wait(
             timeout=timeout,
         )
         state["job_id"] = job_id
+        state["publish_request_id"] = job_id
         state["final"] = final
         state["published_dataset"] = final["dataset"]
         save_state(state)
         return {
             "run_id": run_id,
-            "job_id": job_id,
+            "publish_request_id": job_id,
             "final": final,
             "published_dataset": final["dataset"],
             "next_action": "train.plan",

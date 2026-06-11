@@ -14,6 +14,9 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 
 - Start every session with `pangu-agent doctor --json`.
 - List scenarios with `pangu-agent scenarios --json`.
+- Before starting a workflow, identify the user's goal and pass it to the entry command with `--goal`.
+- Supported goals are `dataset_ready`, `training_submitted`, `training_completed`, `model_published`, `deployment_submitted`, and `service_running`.
+- If a command returns `terminal: true` or `next_action: stop`, stop the workflow. Do not continue to publish or deploy unless the user's original goal requires it.
 - If a scenario is unsupported, stop and ask for a scenario profile to be added.
 - IDs and names used for model/dataset/pool selection must come from `plan` output.
 - Use candidate indexes, not manually typed IDs, whenever a command accepts `--model`, `--dataset`, `--pool`, `--option`, or `--source`.
@@ -31,6 +34,10 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - Clean expired local run state with `pangu-agent gc --max-age-hours 24` when old run IDs pile up.
 - If a command returns `ok: false`, follow its `next_action`; do not guess a replacement command.
 
+Goal defaults are conservative: dataset workflows default to `dataset_ready`, training workflows default to `training_submitted`, and deployment workflows default to `deployment_submitted`. Use farther goals only when the user asks for them.
+If the user expands the goal later, pass the new `--goal` on the next status/publish command that accepts it so the saved run state is updated.
+When `next_action` starts a new run, such as `train.plan` after dataset publish or `deploy.plan` after model resolution, pass the same `goal` value returned by the previous command.
+
 ## Dataset Workflow
 
 Use this when the user needs to find, import, or publish training data.
@@ -38,7 +45,7 @@ Use this when the user needs to find, import, or publish training data.
 ### List Training Datasets
 
 ```bash
-pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --limit 1000 --page-size 20 --json
+pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --goal dataset_ready --limit 1000 --page-size 20 --json
 ```
 
 This lists only ready training datasets for the scenario. If no `PUBLISH`/`ONLINE` dataset exists, prepare and publish data first.
@@ -46,7 +53,7 @@ If `has_more: true`, page through results or filter by name:
 
 ```bash
 pangu-agent candidates --run-id <run_id> --kind datasets --page 2 --page-size 20 --json
-pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --name <keyword> --limit 1000 --page-size 20 --json
+pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --name <keyword> --goal dataset_ready --limit 1000 --page-size 20 --json
 ```
 
 ### Import OBS Data
@@ -55,7 +62,8 @@ pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --
 pangu-agent dataset import-validate \
   --scenario cv_image_classification \
   --name <dataset_name> \
-  --obs-path <bucket/path/>
+  --obs-path <bucket/path/> \
+  --goal dataset_ready
 
 pangu-agent dataset import-submit --run-id <run_id> --wait
 ```
@@ -68,6 +76,7 @@ Do not pass `content_type` or `file_format`; the scenario profile supplies them.
 pangu-agent dataset publish-prepare \
   --scenario cv_image_classification \
   --source-catalog ORIGINAL \
+  --goal dataset_ready \
   --limit 1000 \
   --page-size 20 \
   --json
@@ -96,8 +105,10 @@ doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> params 
 ### Plan
 
 ```bash
-pangu-agent train plan --scenario cv_image_classification --limit 1000 --page-size 20 --json
+pangu-agent train plan --scenario cv_image_classification --goal training_submitted --limit 1000 --page-size 20 --json
 ```
+
+Use `--goal training_completed` only when the user wants to wait until the training task finishes. Use `--goal model_published` or `--goal service_running` only when the user explicitly asks to continue past training.
 
 Show the returned `models`, `datasets`, and `pools` to the user. Ask the user to choose indexes and provide:
 
@@ -178,10 +189,10 @@ pangu-agent train submit --run-id <run_id>
 
 Submit reuses the hyperparameter overrides recorded by validate. Do not pass new hyperparameters at submit time. If the user wants a different batch size or any other hyperparameter, rerun validate with the new values, then ask for approval again.
 
-After submit, use:
+After submit, stop if the response has `terminal: true`. If the workflow goal is beyond `training_submitted`, use the returned `status_command` or:
 
 ```bash
-pangu-agent train status --task-id <task_id> --json
+pangu-agent train status --run-id <run_id> --task-id <task_id> --json
 ```
 
 ### Publish Training Output
@@ -190,6 +201,7 @@ When a task is completed and the user wants to publish:
 
 ```bash
 pangu-agent train publish \
+  --run-id <run_id> \
   --task-id <task_id> \
   --asset-name <asset_name> \
   --visibility current \
@@ -201,7 +213,7 @@ Only pass `--confirm publish-model` after the user explicitly agrees to publish 
 Resolve outputs for deployment with:
 
 ```bash
-pangu-agent train published-assets --task-id <task_id> --json
+pangu-agent train published-assets --run-id <run_id> --task-id <task_id> --json
 ```
 
 ## Deployment Workflow
@@ -215,8 +227,10 @@ deploy plan -> user chooses option/pool -> scaffold -> validate -> user approves
 ### Plan
 
 ```bash
-pangu-agent deploy plan --asset-id <asset_id> --page-size 20 --json
+pangu-agent deploy plan --asset-id <asset_id> --goal deployment_submitted --page-size 20 --json
 ```
+
+Use `--goal service_running` only when the user wants to wait until the service is running.
 
 Show returned `deploy_options` and `pools` to the user. Do not hardcode chip types such as `D310P`; use the returned options.
 If `candidate_pages.pools.has_more` is true, page through pools with `pangu-agent candidates --run-id <run_id> --kind pools --page <n> --page-size 20 --json`.
@@ -253,10 +267,10 @@ Only run this after the user approves the exact `approval_summary` returned by v
 
 ```bash
 pangu-agent deploy submit --run-id <run_id>
-pangu-agent deploy status --service-id <service_id> --json
+pangu-agent deploy status --run-id <run_id> --service-id <service_id> --json
 ```
 
-Poll status until `running` or `failed`.
+After submit, stop if the response has `terminal: true`. If the workflow goal is `service_running`, poll status until `terminal: true`, `running`, or `failed`.
 
 ## Supported Initial Scenarios
 

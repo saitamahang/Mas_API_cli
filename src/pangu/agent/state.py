@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 from pangu.agent.errors import AgentError
+from pangu.agent.goals import default_goal_for_kind, normalize_goal
 from pangu.config import CONFIG_DIR
 
 
@@ -60,7 +61,13 @@ def load_state(run_id: str, expected_kind: str | None = None) -> dict[str, Any]:
     return state
 
 
-def base_state(kind: str, scenario: str | None, env_type: str, workspace_id: str) -> dict[str, Any]:
+def base_state(
+    kind: str,
+    scenario: str | None,
+    env_type: str,
+    workspace_id: str,
+    goal: str | None = None,
+) -> dict[str, Any]:
     created = now_utc()
     run_id = new_run_id(kind)
     return {
@@ -68,6 +75,7 @@ def base_state(kind: str, scenario: str | None, env_type: str, workspace_id: str
         "run_id": run_id,
         "kind": kind,
         "scenario": scenario,
+        "goal": normalize_goal(goal, default_goal_for_kind(kind)),
         "env_type": env_type,
         "workspace_id": workspace_id,
         "created_at": created.isoformat(),

@@ -36,6 +36,17 @@ from pangu.agent.datasets import (
     validate_training_dataset_ready,
 )
 from pangu.agent.errors import AgentError
+from pangu.agent.goals import (
+    DATASET_READY,
+    DEPLOYMENT_SUBMITTED,
+    MODEL_PUBLISHED,
+    SERVICE_RUNNING,
+    TRAINING_COMPLETED,
+    TRAINING_SUBMITTED,
+    normalize_goal,
+    transient_goal_state,
+    with_goal_next_action,
+)
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
     RUNS_DIR,
@@ -119,6 +130,29 @@ def _config_and_client(workspace: Optional[str] = None) -> tuple[PanguConfig, Pa
     except Exception as e:
         raise AgentError("missing_workspace", str(e), "set_default_workspace_or_pass_workspace") from e
     return config, PanguClient(config), workspace_id
+
+
+def _training_status_value(data: dict[str, Any]) -> str:
+    return str(data.get("task_status") or data.get("status") or "").lower()
+
+
+def _service_status_value(data: dict[str, Any]) -> str:
+    return str(data.get("status") or data.get("service_status") or "").lower()
+
+
+def _goal_state(
+    run_id: Optional[str],
+    expected_kind: str,
+    goal: Optional[str],
+    default_goal: str,
+) -> dict[str, Any]:
+    if not run_id:
+        return transient_goal_state(expected_kind, goal, default_goal)
+    state = load_state(run_id, expected_kind=expected_kind)
+    if goal:
+        state["goal"] = normalize_goal(goal, default_goal)
+        save_state(state)
+    return state
 
 
 def _flatten_asset_ext(item: dict[str, Any]) -> dict[str, Any]:
@@ -561,12 +595,11 @@ def candidates(
         if not isinstance(rows, list):
             raise AgentError("candidate_kind_not_found", f"run state 中没有候选列表: {kind}", "choose_kind_from_plan_output")
         page_data = candidate_page(kind, rows, page=page, page_size=page_size)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "state_kind": state.get("kind"),
             **page_data,
-            "next_action": "choose_index_or_page_more" if page_data["has_more"] else "choose_index",
-        }
+        }, continue_action="choose_index_or_page_more" if page_data["has_more"] else "choose_index")
 
     _emit(run)
 
@@ -579,6 +612,7 @@ def dataset_list(
     limit: int = typer.Option(1000, "--limit"),
     page: int = typer.Option(1, "--page"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -589,13 +623,13 @@ def dataset_list(
         config, client, workspace_id = _config_and_client(workspace)
         status = [READY_DATASET_STATUS] if catalog == scn["dataset"]["training_catalog"] else None
         rows = _query_datasets(client, workspace_id, scn, catalog=catalog, limit=limit, name=name, status=status)
-        state = base_state("dataset_list", scenario, config.env_type, workspace_id)
+        state = base_state("dataset_list", scenario, config.env_type, workspace_id, goal=goal)
         state["catalog"] = catalog
         state["filters"] = {"name": name, "limit": limit, "status": status}
         state["datasets"] = rows
         save_state(state)
         page_data = candidate_page("datasets", rows, page=page, page_size=page_size)
-        return {
+        return with_goal_next_action(state, {
             "run_id": state["run_id"],
             "scenario": scenario,
             "catalog": catalog,
@@ -606,8 +640,7 @@ def dataset_list(
                 f"--page {page + 1} --page-size {page_data['page_size']} --json"
                 if page_data["has_more"] else ""
             ),
-            "next_action": "choose_dataset_or_page_more" if rows else "dataset_import_or_publish_required",
-        }
+        }, continue_action="choose_dataset_or_page_more" if rows else "dataset_import_or_publish_required")
 
     _emit(run)
 
@@ -618,6 +651,7 @@ def dataset_import_validate(
     name: str = typer.Option(..., "--name"),
     obs_path: str = typer.Option(..., "--obs-path"),
     desc: Optional[str] = typer.Option(None, "--desc"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
 ):
     """Build and cache a dataset import request without submitting it."""
@@ -635,14 +669,13 @@ def dataset_import_validate(
         }
         if desc:
             body["desc"] = desc
-        state = base_state("dataset_import", scenario, config.env_type, workspace_id)
+        state = base_state("dataset_import", scenario, config.env_type, workspace_id, goal=goal)
         state["request_body"] = body
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": state["run_id"],
             "request_body": body,
-            "next_action": "dataset.import-submit",
-        }
+        }, continue_action="dataset.import-submit")
 
     _emit(run)
 
@@ -670,7 +703,11 @@ def dataset_import_submit(
             )
         state["submit_result"] = data
         save_state(state)
-        return {"job": data, "final": final, "next_action": "dataset.publish-prepare"}
+        return with_goal_next_action(
+            state,
+            {"job": data, "final": final},
+            continue_action="dataset.publish-prepare",
+        )
 
     _emit(run)
 
@@ -683,6 +720,7 @@ def dataset_publish_prepare(
     limit: int = typer.Option(1000, "--limit"),
     page: int = typer.Option(1, "--page"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -700,13 +738,13 @@ def dataset_publish_prepare(
             name=name,
             status=[READY_DATASET_STATUS],
         )
-        state = base_state("dataset_publish", scenario, config.env_type, workspace_id)
+        state = base_state("dataset_publish", scenario, config.env_type, workspace_id, goal=goal)
         state["source_catalog"] = source_catalog
         state["filters"] = {"name": name, "limit": limit, "status": [READY_DATASET_STATUS]}
         state["sources"] = sources
         save_state(state)
         page_data = candidate_page("sources", sources, page=page, page_size=page_size)
-        return {
+        return with_goal_next_action(state, {
             "run_id": state["run_id"],
             "scenario": scenario,
             "source_catalog": source_catalog,
@@ -717,8 +755,7 @@ def dataset_publish_prepare(
                 f"--page {page + 1} --page-size {page_data['page_size']} --json"
                 if page_data["has_more"] else ""
             ),
-            "next_action": "choose_sources_or_page_more" if sources else "dataset.import-validate",
-        }
+        }, continue_action="choose_sources_or_page_more" if sources else "dataset.import-validate")
 
     _emit(run)
 
@@ -770,11 +807,10 @@ def dataset_publish_validate(
         state["request_body"] = body
         state["validate_success"] = True
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "request_body": body,
-            "next_action": "dataset.publish-submit",
-        }
+        }, continue_action="dataset.publish-submit")
 
     _emit(run)
 
@@ -817,14 +853,18 @@ def dataset_publish_submit(
         if ready_dataset:
             state["published_dataset"] = ready_dataset
         save_state(state)
-        return {
-            "publish_request": data,
-            "publish_request_id": job_id,
-            "final": final,
-            "published_dataset": ready_dataset,
-            "next_action": "train.plan" if ready_dataset else "dataset.publish-wait",
-            "wait_command": "" if ready_dataset else f"pangu-agent dataset publish-wait --run-id {run_id} --json",
-        }
+        return with_goal_next_action(
+            state,
+            {
+                "publish_request": data,
+                "publish_request_id": job_id,
+                "final": final,
+                "published_dataset": ready_dataset,
+                "wait_command": "" if ready_dataset else f"pangu-agent dataset publish-wait --run-id {run_id} --json",
+            },
+            milestone=DATASET_READY if ready_dataset else None,
+            continue_action="train.plan" if ready_dataset else "dataset.publish-wait",
+        )
 
     _emit(run)
 
@@ -854,14 +894,18 @@ def dataset_publish_status(
         if ready_dataset:
             state["published_dataset"] = ready_dataset
             save_state(state)
-        return {
-            "run_id": run_id,
-            "publish_request_id": publish_request_id,
-            "publish_status": publish_status,
-            "dataset_ready": bool(ready_dataset),
-            "published_dataset": ready_dataset,
-            "next_action": "train.plan" if ready_dataset else "dataset.publish-wait",
-        }
+        return with_goal_next_action(
+            state,
+            {
+                "run_id": run_id,
+                "publish_request_id": publish_request_id,
+                "publish_status": publish_status,
+                "dataset_ready": bool(ready_dataset),
+                "published_dataset": ready_dataset,
+            },
+            milestone=DATASET_READY if ready_dataset else None,
+            continue_action="train.plan" if ready_dataset else "dataset.publish-wait",
+        )
 
     _emit(run)
 
@@ -896,13 +940,17 @@ def dataset_publish_wait(
         state["final"] = final
         state["published_dataset"] = final["dataset"]
         save_state(state)
-        return {
-            "run_id": run_id,
-            "publish_request_id": job_id,
-            "final": final,
-            "published_dataset": final["dataset"],
-            "next_action": "train.plan",
-        }
+        return with_goal_next_action(
+            state,
+            {
+                "run_id": run_id,
+                "publish_request_id": job_id,
+                "final": final,
+                "published_dataset": final["dataset"],
+            },
+            milestone=DATASET_READY,
+            continue_action="train.plan",
+        )
 
     _emit(run)
 
@@ -913,6 +961,7 @@ def train_plan(
     limit: int = typer.Option(1000, "--limit"),
     dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="按训练数据集名称模糊过滤"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -932,7 +981,7 @@ def train_plan(
             status=[READY_DATASET_STATUS],
         )
         pools = _query_pools(client, workspace_id, config.env_type, purpose="train")
-        state = base_state("training", scenario, config.env_type, workspace_id)
+        state = base_state("training", scenario, config.env_type, workspace_id, goal=goal)
         state["models"] = models
         state["datasets"] = datasets
         state["pools"] = pools
@@ -948,7 +997,7 @@ def train_plan(
         model_page = candidate_page("models", models, page=1, page_size=page_size)
         dataset_page = candidate_page("datasets", datasets, page=1, page_size=page_size)
         pool_page = candidate_page("pools", pools, page=1, page_size=page_size)
-        return {
+        return with_goal_next_action(state, {
             "run_id": state["run_id"],
             "scenario": scenario,
             "env_type": config.env_type,
@@ -963,8 +1012,7 @@ def train_plan(
                 "pools": page_metadata("pools", pools, page=1, page_size=page_size),
             },
             "page_more_command": f"pangu-agent candidates --run-id {state['run_id']} --kind <models|datasets|pools> --page <n> --page-size {page_size} --json",
-            "next_action": next_action,
-        }
+        }, continue_action=next_action)
 
     _emit(run)
 
@@ -1040,12 +1088,11 @@ def train_scaffold(
         state["artifact_hash"] = ""
         state.pop("approval", None)
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "train_yaml": str(artifact),
             "wrapped_output": output.strip(),
-            "next_action": "train.validate",
-        }
+        }, continue_action="train.validate")
 
     _emit(run)
 
@@ -1065,15 +1112,14 @@ def train_params(
         body = load_yaml(artifact)
         context = validate_training_context(state, body)
         parameters = list_training_parameters_from_body(body)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "train_yaml": str(artifact),
             "training_context": context,
             "parameters": parameters,
             "parameter_count": len(parameters),
             "param_usage": "pangu-agent train validate --run-id <run_id> --param <index|name>=<json_value>",
-            "next_action": "train.validate",
-        }
+        }, continue_action="train.validate")
 
     _emit(run)
 
@@ -1148,7 +1194,7 @@ def train_validate(
         state.pop("approval", None)
         approval_summary = build_training_submit_summary(state)
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "train_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
@@ -1158,8 +1204,7 @@ def train_validate(
             "approval_summary": approval_summary,
             "approval_confirm": TRAIN_SUBMIT_CONFIRM,
             "dry_run_output": output.strip(),
-            "next_action": "ask_user_submit_approval",
-        }
+        }, continue_action="ask_user_submit_approval")
 
     _emit(run)
 
@@ -1179,11 +1224,10 @@ def train_approve(
         summary = build_training_submit_summary(state)
         approval = record_approval(state, TRAIN_SUBMIT_ACTION, summary, state["artifact_hash"])
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "approval": approval,
-            "next_action": "train.submit",
-        }
+        }, continue_action="train.submit")
 
     _emit(run)
 
@@ -1266,7 +1310,19 @@ def train_submit(
         data = extract_first_json(output)
         state["submit_result"] = data
         save_state(state)
-        return {"task": data, "next_action": "train.status"}
+        task_id = data.get("task_id") or data.get("id") or data.get("taskId") if isinstance(data, dict) else ""
+        return with_goal_next_action(
+            state,
+            {
+                "task": data,
+                "status_command": (
+                    f"pangu-agent train status --run-id {run_id} --task-id {task_id} --json"
+                    if task_id else ""
+                ),
+            },
+            milestone=TRAINING_SUBMITTED,
+            continue_action="train.status",
+        )
 
     _emit(run)
 
@@ -1274,15 +1330,34 @@ def train_submit(
 @train_app.command("status")
 def train_status(
     task_id: str = typer.Option(..., "--task-id"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary for standalone status checks"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
     """Get training task status."""
 
     def run():
-        _, client, workspace_id = _config_and_client(workspace)
+        state = _goal_state(run_id, "training", goal, TRAINING_COMPLETED)
+        _, client, workspace_id = _config_and_client(workspace or state.get("workspace_id"))
         data = client.get(TRAIN_TASK_PATH, workspace_id=workspace_id, task_id=task_id)
-        return {"task": data, "next_action": "train.publish_if_completed"}
+        status = _training_status_value(data)
+        if status == "completed":
+            return with_goal_next_action(
+                state,
+                {"task": data, "task_status": status},
+                milestone=TRAINING_COMPLETED,
+                continue_action="train.publish_if_user_wants",
+            )
+        next_action = "inspect_training_failure" if status in {"failed", "stopped"} else "poll_training_status"
+        result = with_goal_next_action(
+            state,
+            {"task": data, "task_status": status},
+            continue_action=next_action,
+        )
+        if status in {"failed", "stopped"}:
+            result["terminal"] = True
+        return result
 
     _emit(run)
 
@@ -1295,18 +1370,21 @@ def train_publish(
     category: str = typer.Option("pangu", "--category"),
     description: str = typer.Option("", "--description", "-d"),
     confirm: Optional[str] = typer.Option(None, "--confirm"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary for standalone publish"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
 ):
     """Publish a completed training task output as a model asset."""
 
     def run():
+        state = _goal_state(run_id, "training", goal, MODEL_PUBLISHED)
         require_confirmation(confirm, PUBLISH_MODEL_CONFIRM)
         output = run_quietly(
             publish_model,
             task_id=task_id,
             asset_name=asset_name,
             visibility=visibility,
-            workspace=workspace,
+            workspace=workspace or state.get("workspace_id"),
             execution_id=None,
             model_id=None,
             category=category,
@@ -1314,7 +1392,15 @@ def train_publish(
             fmt="json",
         )
         data = extract_first_json(output)
-        return {"publish_result": data, "next_action": "train.published-assets_or_deploy.plan"}
+        if run_id:
+            state["publish_result"] = data
+            save_state(state)
+        return with_goal_next_action(
+            state,
+            {"publish_result": data},
+            milestone=MODEL_PUBLISHED,
+            continue_action="train.published-assets_or_deploy.plan",
+        )
 
     _emit(run)
 
@@ -1322,19 +1408,26 @@ def train_publish(
 @train_app.command("published-assets")
 def train_published_assets(
     task_id: str = typer.Option(..., "--task-id"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary for standalone asset resolution"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
     """Resolve model outputs for a training task."""
 
     def run():
-        _, client, workspace_id = _config_and_client(workspace)
+        state = _goal_state(run_id, "training", goal, SERVICE_RUNNING)
+        _, client, workspace_id = _config_and_client(workspace or state.get("workspace_id"))
         detail = client.get(TRAIN_TASK_PATH, workspace_id=workspace_id, task_id=task_id)
         execution_id = detail.get("execution_id")
         if not execution_id:
             raise AgentError("missing_execution_id", "任务详情中没有 execution_id", "inspect_task_detail")
         data = client.get(TRAIN_MODELS_PATH, workspace_id=workspace_id, params={"execution_id": execution_id})
-        return {"models": data.get("models", []) if isinstance(data, dict) else [], "next_action": "deploy.plan"}
+        return with_goal_next_action(
+            state,
+            {"models": data.get("models", []) if isinstance(data, dict) else []},
+            continue_action="deploy.plan",
+        )
 
     _emit(run)
 
@@ -1343,6 +1436,7 @@ def train_published_assets(
 def deploy_plan(
     asset_id: str = typer.Option(..., "--asset-id"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -1391,14 +1485,14 @@ def deploy_plan(
                 row["option_index"] = opt_index
                 row["index"] = len(all_pools) + 1
                 all_pools.append(row)
-        state = base_state("deployment", None, config.env_type, workspace_id)
+        state = base_state("deployment", None, config.env_type, workspace_id, goal=goal)
         state["asset_id"] = asset_id
         state["deploy_options"] = indexed_options
         state["pools"] = all_pools
         save_state(state)
         option_page = candidate_page("deploy_options", indexed_options, page=1, page_size=page_size)
         pool_page = candidate_page("pools", all_pools, page=1, page_size=page_size)
-        return {
+        return with_goal_next_action(state, {
             "run_id": state["run_id"],
             "asset_id": asset_id,
             "deploy_options": option_page["deploy_options"],
@@ -1408,8 +1502,7 @@ def deploy_plan(
                 "pools": page_metadata("pools", all_pools, page=1, page_size=page_size),
             },
             "page_more_command": f"pangu-agent candidates --run-id {state['run_id']} --kind <deploy_options|pools> --page <n> --page-size {page_size} --json",
-            "next_action": "choose_deploy_option_and_pool",
-        }
+        }, continue_action="choose_deploy_option_and_pool")
 
     _emit(run)
 
@@ -1463,12 +1556,11 @@ def deploy_scaffold(
         state["artifact_hash"] = ""
         state.pop("approval", None)
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "deploy_yaml": str(artifact),
             "wrapped_output": output.strip(),
-            "next_action": "deploy.validate",
-        }
+        }, continue_action="deploy.validate")
 
     _emit(run)
 
@@ -1505,15 +1597,14 @@ def deploy_validate(run_id: str = typer.Option(..., "--run-id")):
         state.pop("approval", None)
         approval_summary = build_deploy_submit_summary(state)
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "deploy_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
             "approval_required": True,
             "approval_summary": approval_summary,
             "approval_confirm": DEPLOY_SUBMIT_CONFIRM,
-            "next_action": "ask_user_deploy_approval",
-        }
+        }, continue_action="ask_user_deploy_approval")
 
     _emit(run)
 
@@ -1532,11 +1623,10 @@ def deploy_approve(
         summary = build_deploy_submit_summary(state)
         approval = record_approval(state, DEPLOY_SUBMIT_ACTION, summary, state["artifact_hash"])
         save_state(state)
-        return {
+        return with_goal_next_action(state, {
             "run_id": run_id,
             "approval": approval,
-            "next_action": "deploy.submit",
-        }
+        }, continue_action="deploy.submit")
 
     _emit(run)
 
@@ -1586,7 +1676,19 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
         data = extract_first_json(output)
         state["submit_result"] = data
         save_state(state)
-        return {"service": data, "next_action": "deploy.status"}
+        service_id = data.get("service_id") or data.get("id") if isinstance(data, dict) else ""
+        return with_goal_next_action(
+            state,
+            {
+                "service": data,
+                "status_command": (
+                    f"pangu-agent deploy status --run-id {run_id} --service-id {service_id} --json"
+                    if service_id else ""
+                ),
+            },
+            milestone=DEPLOYMENT_SUBMITTED,
+            continue_action="deploy.status",
+        )
 
     _emit(run)
 
@@ -1594,18 +1696,37 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
 @deploy_app.command("status")
 def deploy_status(
     service_id: str = typer.Option(..., "--service-id"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary for standalone status checks"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
     """Get deployment service status."""
 
     def run():
-        _, client, workspace_id = _config_and_client(workspace)
+        state = _goal_state(run_id, "deployment", goal, SERVICE_RUNNING)
+        _, client, workspace_id = _config_and_client(workspace or state.get("workspace_id"))
         data = client.get(SERVICE_DETAIL_PATH, workspace_id=workspace_id, service_id=service_id)
         assets = data.get("assets", [])
         if assets and isinstance(assets[0], dict) and "asset_type" not in data:
             data["asset_type"] = assets[0].get("asset_type", "")
-        return {"service": data, "next_action": "poll_until_running_or_failed"}
+        status = _service_status_value(data)
+        if status == "running":
+            return with_goal_next_action(
+                state,
+                {"service": data, "service_status": status},
+                milestone=SERVICE_RUNNING,
+                continue_action="stop",
+            )
+        next_action = "inspect_deployment_failure" if status in {"failed", "stopped"} else "poll_deploy_status"
+        result = with_goal_next_action(
+            state,
+            {"service": data, "service_status": status},
+            continue_action=next_action,
+        )
+        if status in {"failed", "stopped"}:
+            result["terminal"] = True
+        return result
 
     _emit(run)
 

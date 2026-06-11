@@ -63,6 +63,22 @@ class AgentStateTests(unittest.TestCase):
             self.assertIn(path.name, result["deleted"])
             self.assertFalse(path.exists())
 
+    def test_base_state_records_default_or_explicit_goal(self):
+        with TemporaryDirectory() as tmp:
+            state = load_state_module(Path(tmp))
+
+            training = state.base_state("training", "cv_image_classification", "HCS", "workspace-a")
+            dataset = state.base_state(
+                "dataset_publish",
+                "cv_image_classification",
+                "HCS",
+                "workspace-a",
+                goal="training_submitted",
+            )
+
+            self.assertEqual(training["goal"], "training_submitted")
+            self.assertEqual(dataset["goal"], "training_submitted")
+
 
 if __name__ == "__main__":
     unittest.main()

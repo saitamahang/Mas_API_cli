@@ -38,7 +38,11 @@ from pangu.agent.state import (
     sha256_file,
     yaml_has_todo,
 )
-from pangu.agent.training_params import resolve_training_override_from_body
+from pangu.agent.training_params import (
+    list_training_parameters_from_body,
+    resolve_training_override_from_body,
+    resolve_training_param_overrides_from_body,
+)
 from pangu.agent.utils import extract_first_json, failure, print_json, run_quietly, success
 from pangu.auth import AuthManager
 from pangu.client import APIError, PanguClient
@@ -267,6 +271,53 @@ def _resolve_training_override(
 ) -> tuple[str, str]:
     body = load_yaml(artifact)
     return resolve_training_override_from_body(body, scenario, param_key, value)
+
+
+def _resolve_training_overrides(
+    artifact: Path,
+    scenario: dict[str, Any],
+    batch_size: Optional[int],
+    override_params: Optional[List[str]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    body = load_yaml(artifact)
+    overrides = resolve_training_param_overrides_from_body(body, override_params)
+    batch_param_names = set(scenario["training"].get("batch_size_param_names") or ["batch_size"])
+    batch_records = [item for item in overrides if item.get("param") in batch_param_names]
+    if batch_size is not None and batch_records:
+        raise AgentError(
+            "duplicate_training_param_override",
+            "不能同时使用 --batch-size 和 --param 覆盖 batch size",
+            "choose_batch_size_or_param_not_both",
+            {"batch_size_params": sorted(batch_param_names)},
+        )
+    if batch_records:
+        batch_param = str(batch_records[0]["param"])
+        bs = batch_records[0]["value"]
+    else:
+        bs = batch_size if batch_size is not None else scenario["training"].get("default_batch_size", 1)
+        batch_param, batch_override = resolve_training_override_from_body(body, scenario, "batch_size", bs)
+        overrides.append(
+            {
+                "input": "--batch-size" if batch_size is not None else "scenario.default_batch_size",
+                "param": batch_param,
+                "value": bs,
+                "override": batch_override,
+            }
+        )
+    validation = {
+        "batch_size": bs,
+        "batch_size_param": batch_param,
+        "override_params": [str(item["override"]) for item in overrides],
+        "overrides": [
+            {
+                "param": item["param"],
+                "value": item["value"],
+                "source": item["input"],
+            }
+            for item in overrides
+        ],
+    }
+    return overrides, validation
 
 
 @app.command()
@@ -700,10 +751,37 @@ def train_scaffold(
     _emit(run)
 
 
+@train_app.command("params")
+def train_params(
+    run_id: str = typer.Option(..., "--run-id"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """List editable training parameters from the generated YAML."""
+
+    def run():
+        state = load_state(run_id, expected_kind="training")
+        artifact = Path(state.get("artifacts", {}).get("train_yaml") or "")
+        if not artifact.exists():
+            raise AgentError("artifact_missing", "训练 YAML 不存在", "run_train_scaffold")
+        body = load_yaml(artifact)
+        parameters = list_training_parameters_from_body(body)
+        return {
+            "run_id": run_id,
+            "train_yaml": str(artifact),
+            "parameters": parameters,
+            "parameter_count": len(parameters),
+            "param_usage": "pangu-agent train validate --run-id <run_id> --param <index|name>=<json_value>",
+            "next_action": "train.validate",
+        }
+
+    _emit(run)
+
+
 @train_app.command("validate")
 def train_validate(
     run_id: str = typer.Option(..., "--run-id"),
     batch_size: Optional[int] = typer.Option(None, "--batch-size"),
+    override_params: Optional[List[str]] = typer.Option(None, "--param", help="覆盖训练超参，格式 name=value 或 index=value，可多次传入"),
 ):
     """Dry-run a generated training YAML and record its artifact hash."""
 
@@ -713,8 +791,8 @@ def train_validate(
         if not artifact.exists():
             raise AgentError("artifact_missing", "训练 YAML 不存在", "run_train_scaffold")
         scn = get_scenario(state["scenario"])
-        bs = batch_size or scn["training"].get("default_batch_size", 1)
-        batch_param, batch_override = _resolve_training_override(artifact, scn, "batch_size", bs)
+        overrides, validation = _resolve_training_overrides(artifact, scn, batch_size, override_params)
+        wrapped_override_params = [item["override"] for item in overrides]
         output = run_quietly(
             create_task,
             config=str(artifact),
@@ -752,12 +830,12 @@ def train_validate(
             workspace=state.get("workspace_id"),
             wait=False,
             dry_run=True,
-            override_params=[batch_override],
+            override_params=wrapped_override_params,
             fmt="yaml",
         )
         state["validate_success"] = True
         state["artifact_hash"] = sha256_file(artifact)
-        state["validation"] = {"batch_size": bs, "batch_size_param": batch_param}
+        state["validation"] = validation
         state.pop("approval", None)
         approval_summary = build_training_submit_summary(state)
         save_state(state)
@@ -765,7 +843,7 @@ def train_validate(
             "run_id": run_id,
             "train_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
-            "validated_overrides": [batch_override],
+            "validated_overrides": validation["overrides"],
             "approval_required": True,
             "approval_summary": approval_summary,
             "approval_confirm": TRAIN_SUBMIT_CONFIRM,
@@ -827,6 +905,9 @@ def train_submit(
                 "缺少 validate 阶段确认过的训练参数覆盖记录",
                 "rerun_train_validate",
             )
+        wrapped_override_params = validation.get("override_params")
+        if not wrapped_override_params:
+            wrapped_override_params = [f"{batch_param}={bs}"]
         output = run_quietly(
             create_task,
             config=str(artifact),
@@ -864,7 +945,7 @@ def train_submit(
             workspace=state.get("workspace_id"),
             wait=False,
             dry_run=False,
-            override_params=[f"{batch_param}={bs}"],
+            override_params=wrapped_override_params,
             fmt="json",
         )
         data = extract_first_json(output)

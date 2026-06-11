@@ -17,11 +17,14 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - If a scenario is unsupported, stop and ask for a scenario profile to be added.
 - IDs and names used for model/dataset/pool selection must come from `plan` output.
 - Use candidate indexes, not manually typed IDs, whenever a command accepts `--model`, `--dataset`, `--pool`, `--option`, or `--source`.
+- `--page-size` controls display only. It does not expand backend search scope. Keep it between 1 and 50; use `--limit 1000` for backend search scope.
 - Long candidate lists are paged. Never assume output is complete when `has_more: true`; use `pangu-agent candidates --run-id <run_id> --kind <kind> --page <n> --page-size 20 --json` or add a name filter.
+- If a command returns `invalid_page_size`, rerun with `--page-size 20` or `--page-size 50`. Do not invent a larger `--page-size`.
 - Every submit requires validate first.
 - If validate succeeds and a YAML file changes afterward, submit will fail; rerun validate.
 - Training submit, model publish, and deployment submit require explicit user approval. Never run an `approve` command or pass `--confirm` until the user clearly approves the shown summary.
-- If training validate used `--batch-size`, submit must use the same value or omit it. To change batch size, rerun validate first.
+- Do not edit generated training YAML for hyperparameter changes. Use `train params` and `train validate --param` instead.
+- Training submit reuses validate-time hyperparameter overrides. To change batch size or any other hyperparameter, rerun validate first.
 - Never delete old templates. `pangu-agent` creates unique artifacts under `~/.pangu/agent_runs/`.
 - Clean expired local run state with `pangu-agent gc --max-age-hours 24` when old run IDs pile up.
 - If a command returns `ok: false`, follow its `next_action`; do not guess a replacement command.
@@ -84,7 +87,7 @@ If `publish-prepare` returns `has_more: true`, use `pangu-agent candidates --run
 Training follows exactly this state machine:
 
 ```text
-doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> validate -> user approves -> approve -> submit
+doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> params -> validate -> user approves -> approve -> submit
 ```
 
 ### Plan
@@ -98,6 +101,7 @@ Show the returned `models`, `datasets`, and `pools` to the user. Ask the user to
 - `task_name`
 - `cards` (`1`, `2`, `4`, or `8`)
 - optional `batch_size` (default comes from scenario; normally `1`)
+- optional training hyperparameter overrides
 
 If any `candidate_pages.<kind>.has_more` is true, fetch more compact pages before asking the user to choose:
 
@@ -119,7 +123,17 @@ pangu-agent train scaffold \
   --cards <1|2|4|8>
 ```
 
-Do not edit the generated YAML unless the user explicitly asks. Use `--batch-size` during validate/submit instead of editing YAML for batch size.
+Do not edit the generated YAML unless the user explicitly asks. Use validate-time parameter overrides instead of editing YAML for training hyperparameters.
+
+### Params
+
+If the user wants to inspect or change training hyperparameters, list the real parameters from the generated YAML:
+
+```bash
+pangu-agent train params --run-id <run_id> --json
+```
+
+Use only parameter names or indexes returned by `train params`. Prefer indexes when passing overrides. Do not invent parameter names. Do not override parameters marked `editable: false`.
 
 ### Validate
 
@@ -127,8 +141,19 @@ Do not edit the generated YAML unless the user explicitly asks. Use `--batch-siz
 pangu-agent train validate --run-id <run_id> --batch-size 1
 ```
 
+For extra hyperparameter overrides, pass them during validate only:
+
+```bash
+pangu-agent train validate \
+  --run-id <run_id> \
+  --batch-size 1 \
+  --param <param_index>=<json_value> \
+  --param <param_name>=<json_value>
+```
+
 Only continue if `ok: true`.
-If validate returns `training_param_not_found`, stop and ask for the scenario parameter mapping to be updated.
+If validate returns `training_param_not_found`, follow `next_action`: rerun `train params` for user-supplied `--param` mistakes, or stop and ask for scenario parameter mapping when batch size cannot be resolved.
+If validate returns `training_param_index_not_found`, `protected_training_param`, or `duplicate_training_param_override`, rerun `train params` and ask the user to choose valid editable parameters.
 Show `approval_summary` to the user and ask whether to submit the training task. Do not continue without explicit approval.
 
 ### Approve
@@ -142,10 +167,10 @@ Only run this after the user approves the exact `approval_summary` returned by v
 ### Submit
 
 ```bash
-pangu-agent train submit --run-id <run_id> --batch-size 1
+pangu-agent train submit --run-id <run_id>
 ```
 
-Use the same `--batch-size` value as validate. If the user wants a different batch size, rerun validate with the new value before submit.
+Submit reuses the hyperparameter overrides recorded by validate. Do not pass new hyperparameters at submit time. If the user wants a different batch size or any other hyperparameter, rerun validate with the new values, then ask for approval again.
 
 After submit, use:
 

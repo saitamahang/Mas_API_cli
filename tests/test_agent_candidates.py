@@ -56,8 +56,17 @@ class AgentCandidateTests(unittest.TestCase):
 
         self.assertEqual(cm.exception.code, "invalid_page")
 
-    def test_page_size_is_capped(self):
-        self.assertEqual(normalize_page_size(500), MAX_PAGE_SIZE)
+    def test_page_size_above_limit_fails(self):
+        with self.assertRaises(AgentError) as cm:
+            normalize_page_size(500)
+
+        self.assertEqual(cm.exception.code, "invalid_page_size")
+        self.assertEqual(cm.exception.details["received_page_size"], 500)
+        self.assertEqual(cm.exception.details["max_page_size"], MAX_PAGE_SIZE)
+        self.assertEqual(cm.exception.details["search_scope_param"], "limit")
+
+    def test_page_size_at_limit_is_accepted(self):
+        self.assertEqual(normalize_page_size(MAX_PAGE_SIZE), MAX_PAGE_SIZE)
 
 
 if __name__ == "__main__":

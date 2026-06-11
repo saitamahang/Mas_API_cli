@@ -77,7 +77,22 @@ CANDIDATE_FIELDS: dict[str, tuple[str, ...]] = {
 def normalize_page_size(page_size: int) -> int:
     if page_size < 1:
         raise AgentError("invalid_page_size", "page_size 必须大于等于 1", "pass_valid_page_size")
-    return min(page_size, MAX_PAGE_SIZE)
+    if page_size > MAX_PAGE_SIZE:
+        raise AgentError(
+            "invalid_page_size",
+            f"page_size 不能大于 {MAX_PAGE_SIZE}。--page-size 只控制单页展示数量，扩大后端搜索范围请使用 --limit。",
+            "use_limit_for_search_scope_or_page_candidates",
+            {
+                "received_page_size": page_size,
+                "max_page_size": MAX_PAGE_SIZE,
+                "page_size_purpose": "display_only",
+                "search_scope_param": "limit",
+                "recommended_page_size": DEFAULT_PAGE_SIZE,
+                "max_backend_limit_used_by_agent": 1000,
+                "page_more_command": "pangu-agent candidates --run-id <run_id> --kind <kind> --page <n> --page-size 50 --json",
+            },
+        )
+    return page_size
 
 
 def compact_candidate(kind: str, row: dict[str, Any]) -> dict[str, Any]:

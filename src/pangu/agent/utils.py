@@ -20,12 +20,15 @@ def success(**kwargs: Any) -> dict[str, Any]:
 
 
 def failure(error: AgentError) -> dict[str, Any]:
-    return {
+    data = {
         "ok": False,
         "code": error.code,
         "message": error.message,
         "next_action": error.next_action,
     }
+    if error.details:
+        data["details"] = error.details
+    return data
 
 
 def print_json(data: Any) -> None:
@@ -66,4 +69,3 @@ def extract_first_json(text: str) -> Any:
         except ValueError:
             continue
     raise AgentError("json_parse_failed", "未能从命令输出中解析 JSON", "inspect_wrapped_command_output")
-

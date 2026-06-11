@@ -11,6 +11,11 @@ class AgentScenarioTests(unittest.TestCase):
         self.assertGreaterEqual(len(scenarios), 3)
         self.assertIn("cv_image_classification", {row["scenario"] for row in scenarios})
 
+    def test_object_detection_uses_od_sub_type(self):
+        scenario = get_scenario("cv_object_detection")
+
+        self.assertEqual(scenario["model_query"]["sub_type"], "OD")
+
     def test_invalid_scenario_profile_reports_missing_paths(self):
         scenario = get_scenario("cv_image_classification")
         del scenario["training"]["batch_size_param_names"]

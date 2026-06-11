@@ -36,6 +36,20 @@ class AgentCandidateTests(unittest.TestCase):
         self.assertEqual(meta["total"], 1)
         self.assertNotIn("pools", meta)
 
+    def test_model_page_includes_asset_description(self):
+        rows = [
+            {
+                "index": 1,
+                "asset_name": "model-a",
+                "asset_id": "asset-a",
+                "asset_desc": "image classification model",
+            }
+        ]
+
+        page = candidate_page("models", rows, page=1, page_size=20)
+
+        self.assertEqual(page["models"][0]["asset_desc"], "image classification model")
+
     def test_invalid_page_fails(self):
         with self.assertRaises(AgentError) as cm:
             candidate_page("datasets", [{"index": 1}], page=2, page_size=20)

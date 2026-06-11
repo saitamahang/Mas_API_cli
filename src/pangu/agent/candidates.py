@@ -16,6 +16,7 @@ CANDIDATE_FIELDS: dict[str, tuple[str, ...]] = {
         "asset_name",
         "asset_id",
         "model_id",
+        "asset_desc",
         "asset_type",
         "sub_asset_type",
         "asset_source",

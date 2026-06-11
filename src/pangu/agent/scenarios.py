@@ -56,7 +56,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         },
         "model_query": {
             "type": "CV",
-            "sub_type": "ObjectDetection",
+            "sub_type": "OD",
             "source": "Preset",
         },
         "dataset": {

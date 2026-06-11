@@ -354,7 +354,7 @@ def dataset_list(
     scenario: str = typer.Option(..., "--scenario"),
     catalog: str = typer.Option("PUBLISH", "--catalog"),
     name: Optional[str] = typer.Option(None, "--name", help="按数据集名称模糊过滤"),
-    limit: int = typer.Option(100, "--limit"),
+    limit: int = typer.Option(1000, "--limit"),
     page: int = typer.Option(1, "--page"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
@@ -457,7 +457,7 @@ def dataset_publish_prepare(
     scenario: str = typer.Option(..., "--scenario"),
     source_catalog: str = typer.Option("ORIGINAL", "--source-catalog"),
     name: Optional[str] = typer.Option(None, "--name", help="按源数据集名称模糊过滤"),
-    limit: int = typer.Option(100, "--limit"),
+    limit: int = typer.Option(1000, "--limit"),
     page: int = typer.Option(1, "--page"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
@@ -568,7 +568,7 @@ def dataset_publish_submit(run_id: str = typer.Option(..., "--run-id")):
 @train_app.command("plan")
 def train_plan(
     scenario: str = typer.Option(..., "--scenario"),
-    limit: int = typer.Option(100, "--limit"),
+    limit: int = typer.Option(1000, "--limit"),
     dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="按训练数据集名称模糊过滤"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),

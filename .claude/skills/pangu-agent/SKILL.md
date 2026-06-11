@@ -33,7 +33,7 @@ Use this when the user needs to find, import, or publish training data.
 ### List Training Datasets
 
 ```bash
-pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --page-size 20 --json
+pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --limit 1000 --page-size 20 --json
 ```
 
 If no `PUBLISH` dataset exists, prepare data first.
@@ -41,7 +41,7 @@ If `has_more: true`, page through results or filter by name:
 
 ```bash
 pangu-agent candidates --run-id <run_id> --kind datasets --page 2 --page-size 20 --json
-pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --name <keyword> --page-size 20 --json
+pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --name <keyword> --limit 1000 --page-size 20 --json
 ```
 
 ### Import OBS Data
@@ -63,6 +63,7 @@ Do not pass `content_type` or `file_format`; the scenario profile supplies them.
 pangu-agent dataset publish-prepare \
   --scenario cv_image_classification \
   --source-catalog ORIGINAL \
+  --limit 1000 \
   --page-size 20 \
   --json
 
@@ -89,7 +90,7 @@ doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> validat
 ### Plan
 
 ```bash
-pangu-agent train plan --scenario cv_image_classification --page-size 20 --json
+pangu-agent train plan --scenario cv_image_classification --limit 1000 --page-size 20 --json
 ```
 
 Show the returned `models`, `datasets`, and `pools` to the user. Ask the user to choose indexes and provide:

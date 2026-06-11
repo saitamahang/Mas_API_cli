@@ -73,6 +73,7 @@ def build_training_submit_summary(state: dict[str, Any]) -> dict[str, Any]:
         "cards": selection.get("cards"),
         "batch_size": validation.get("batch_size"),
         "training_overrides": validation.get("overrides") or [],
+        "training_context": state.get("training_context") or {},
         "train_yaml": (state.get("artifacts") or {}).get("train_yaml"),
         "artifact_hash": state.get("artifact_hash"),
         "model": _pick(

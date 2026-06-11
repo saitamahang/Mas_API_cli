@@ -43,6 +43,7 @@ from pangu.agent.training_params import (
     resolve_training_override_from_body,
     resolve_training_param_overrides_from_body,
 )
+from pangu.agent.training_context import expected_training_context, validate_training_context
 from pangu.agent.utils import extract_first_json, failure, print_json, run_quietly, success
 from pangu.auth import AuthManager
 from pangu.client import APIError, PanguClient
@@ -736,6 +737,11 @@ def train_scaffold(
             "task_name": task_name,
             "cards": cards,
         }
+        body = load_yaml(artifact)
+        state["training_context"] = {
+            "expected": expected_training_context(state),
+            "actual": validate_training_context(state, body),
+        }
         state["artifacts"]["train_yaml"] = str(artifact)
         state["validate_success"] = False
         state["artifact_hash"] = ""
@@ -764,10 +770,12 @@ def train_params(
         if not artifact.exists():
             raise AgentError("artifact_missing", "训练 YAML 不存在", "run_train_scaffold")
         body = load_yaml(artifact)
+        context = validate_training_context(state, body)
         parameters = list_training_parameters_from_body(body)
         return {
             "run_id": run_id,
             "train_yaml": str(artifact),
+            "training_context": context,
             "parameters": parameters,
             "parameter_count": len(parameters),
             "param_usage": "pangu-agent train validate --run-id <run_id> --param <index|name>=<json_value>",
@@ -790,6 +798,8 @@ def train_validate(
         artifact = Path(state.get("artifacts", {}).get("train_yaml") or "")
         if not artifact.exists():
             raise AgentError("artifact_missing", "训练 YAML 不存在", "run_train_scaffold")
+        body = load_yaml(artifact)
+        context = validate_training_context(state, body)
         scn = get_scenario(state["scenario"])
         overrides, validation = _resolve_training_overrides(artifact, scn, batch_size, override_params)
         wrapped_override_params = [item["override"] for item in overrides]
@@ -836,6 +846,10 @@ def train_validate(
         state["validate_success"] = True
         state["artifact_hash"] = sha256_file(artifact)
         state["validation"] = validation
+        state["training_context"] = {
+            "expected": expected_training_context(state),
+            "actual": context,
+        }
         state.pop("approval", None)
         approval_summary = build_training_submit_summary(state)
         save_state(state)
@@ -843,6 +857,7 @@ def train_validate(
             "run_id": run_id,
             "train_yaml": str(artifact),
             "artifact_hash": state["artifact_hash"],
+            "training_context": context,
             "validated_overrides": validation["overrides"],
             "approval_required": True,
             "approval_summary": approval_summary,
@@ -863,7 +878,8 @@ def train_approve(
 
     def run():
         state = load_state(run_id, expected_kind="training")
-        _require_artifact_hash(state, "train_yaml")
+        artifact = _require_artifact_hash(state, "train_yaml")
+        validate_training_context(state, load_yaml(artifact))
         require_confirmation(confirm, TRAIN_SUBMIT_CONFIRM)
         summary = build_training_submit_summary(state)
         approval = record_approval(state, TRAIN_SUBMIT_ACTION, summary, state["artifact_hash"])
@@ -887,6 +903,7 @@ def train_submit(
     def run():
         state = load_state(run_id, expected_kind="training")
         artifact = _require_artifact_hash(state, "train_yaml")
+        validate_training_context(state, load_yaml(artifact))
         if state.get("submit_result"):
             raise AgentError("already_submitted", "该 run 已提交过训练任务", "train.status")
         require_approval(state, TRAIN_SUBMIT_ACTION, state["artifact_hash"])

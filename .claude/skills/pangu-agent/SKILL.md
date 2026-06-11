@@ -25,6 +25,7 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - Training submit, model publish, and deployment submit require explicit user approval. Never run an `approve` command or pass `--confirm` until the user clearly approves the shown summary.
 - Do not edit generated training YAML for hyperparameter changes. Use `train params` and `train validate --param` instead.
 - Training submit reuses validate-time hyperparameter overrides. To change batch size or any other hyperparameter, rerun validate first.
+- Model, dataset, pool, and cards form one atomic training context. If any of them changes, rerun `train scaffold`, then rerun `train params -> validate -> approve -> submit`.
 - Never delete old templates. `pangu-agent` creates unique artifacts under `~/.pangu/agent_runs/`.
 - Clean expired local run state with `pangu-agent gc --max-age-hours 24` when old run IDs pile up.
 - If a command returns `ok: false`, follow its `next_action`; do not guess a replacement command.
@@ -124,6 +125,7 @@ pangu-agent train scaffold \
 ```
 
 Do not edit the generated YAML unless the user explicitly asks. Use validate-time parameter overrides instead of editing YAML for training hyperparameters.
+The generated YAML is bound to the selected model, dataset, pool, and cards. To change any of those choices, rerun `train scaffold` with the new indexes and repeat the downstream steps.
 
 ### Params
 
@@ -154,6 +156,7 @@ pangu-agent train validate \
 Only continue if `ok: true`.
 If validate returns `training_param_not_found`, follow `next_action`: rerun `train params` for user-supplied `--param` mistakes, or stop and ask for scenario parameter mapping when batch size cannot be resolved.
 If validate returns `training_param_index_not_found`, `protected_training_param`, or `duplicate_training_param_override`, rerun `train params` and ask the user to choose valid editable parameters.
+If validate returns `training_context_mismatch`, rerun `train scaffold`; do not patch the YAML or state by hand.
 Show `approval_summary` to the user and ask whether to submit the training task. Do not continue without explicit approval.
 
 ### Approve

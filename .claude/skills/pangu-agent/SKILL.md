@@ -17,6 +17,7 @@ The agent is not allowed to invent CLI flags or IDs. It must use scenario names,
 - If a scenario is unsupported, stop and ask for a scenario profile to be added.
 - IDs and names used for model/dataset/pool selection must come from `plan` output.
 - Use candidate indexes, not manually typed IDs, whenever a command accepts `--model`, `--dataset`, `--pool`, `--option`, or `--source`.
+- Long candidate lists are paged. Never assume output is complete when `has_more: true`; use `pangu-agent candidates --run-id <run_id> --kind <kind> --page <n> --page-size 20 --json` or add a name filter.
 - Every submit requires validate first.
 - If validate succeeds and a YAML file changes afterward, submit will fail; rerun validate.
 - Training submit, model publish, and deployment submit require explicit user approval. Never run an `approve` command or pass `--confirm` until the user clearly approves the shown summary.
@@ -32,10 +33,16 @@ Use this when the user needs to find, import, or publish training data.
 ### List Training Datasets
 
 ```bash
-pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --json
+pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --page-size 20 --json
 ```
 
 If no `PUBLISH` dataset exists, prepare data first.
+If `has_more: true`, page through results or filter by name:
+
+```bash
+pangu-agent candidates --run-id <run_id> --kind datasets --page 2 --page-size 20 --json
+pangu-agent dataset list --scenario cv_image_classification --catalog PUBLISH --name <keyword> --page-size 20 --json
+```
 
 ### Import OBS Data
 
@@ -56,6 +63,7 @@ Do not pass `content_type` or `file_format`; the scenario profile supplies them.
 pangu-agent dataset publish-prepare \
   --scenario cv_image_classification \
   --source-catalog ORIGINAL \
+  --page-size 20 \
   --json
 
 pangu-agent dataset publish-validate \
@@ -68,6 +76,7 @@ pangu-agent dataset publish-submit --run-id <run_id>
 ```
 
 For CV image scenarios, use `--train-proportion` unless the command output says otherwise.
+If `publish-prepare` returns `has_more: true`, use `pangu-agent candidates --run-id <run_id> --kind sources --page <n> --page-size 20 --json`.
 
 ## Training Workflow
 
@@ -80,7 +89,7 @@ doctor -> scenarios -> train plan -> user chooses indexes -> scaffold -> validat
 ### Plan
 
 ```bash
-pangu-agent train plan --scenario cv_image_classification --json
+pangu-agent train plan --scenario cv_image_classification --page-size 20 --json
 ```
 
 Show the returned `models`, `datasets`, and `pools` to the user. Ask the user to choose indexes and provide:
@@ -88,6 +97,14 @@ Show the returned `models`, `datasets`, and `pools` to the user. Ask the user to
 - `task_name`
 - `cards` (`1`, `2`, `4`, or `8`)
 - optional `batch_size` (default comes from scenario; normally `1`)
+
+If any `candidate_pages.<kind>.has_more` is true, fetch more compact pages before asking the user to choose:
+
+```bash
+pangu-agent candidates --run-id <run_id> --kind datasets --page 2 --page-size 20 --json
+```
+
+Use `--dataset-name <keyword>` on `train plan` when the user provides a dataset name hint.
 
 ### Scaffold
 
@@ -166,10 +183,11 @@ deploy plan -> user chooses option/pool -> scaffold -> validate -> user approves
 ### Plan
 
 ```bash
-pangu-agent deploy plan --asset-id <asset_id> --json
+pangu-agent deploy plan --asset-id <asset_id> --page-size 20 --json
 ```
 
 Show returned `deploy_options` and `pools` to the user. Do not hardcode chip types such as `D310P`; use the returned options.
+If `candidate_pages.pools.has_more` is true, page through pools with `pangu-agent candidates --run-id <run_id> --kind pools --page <n> --page-size 20 --json`.
 
 ### Scaffold
 

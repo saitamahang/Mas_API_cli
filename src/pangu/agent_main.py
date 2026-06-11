@@ -24,6 +24,7 @@ from pangu.agent.approval import (
     require_approval,
     require_confirmation,
 )
+from pangu.agent.candidates import DEFAULT_PAGE_SIZE, candidate_page, page_metadata
 from pangu.agent.errors import AgentError
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
@@ -150,6 +151,7 @@ def _query_datasets(
     scenario: dict[str, Any],
     catalog: str,
     limit: int = 100,
+    name: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     ds = scenario["dataset"]
     content_type = (
@@ -168,6 +170,8 @@ def _query_datasets(
         "modal": ds["modal"],
         "content_type": [content_type],
     }
+    if name:
+        params["name"] = name
     data = client.get(DATASET_LIST_PATH, workspace_id=workspace_id, params=params)
     datasets = (data.get("datasets") if isinstance(data, dict) else None) or []
     rows = []
@@ -318,11 +322,40 @@ def gc(max_age_hours: int = typer.Option(24, "--max-age-hours")):
     _emit(lambda: {**gc_runs(max_age_hours=max_age_hours), "next_action": "continue"})
 
 
+@app.command("candidates")
+def candidates(
+    run_id: str = typer.Option(..., "--run-id"),
+    kind: str = typer.Option(..., "--kind", help="models|datasets|sources|pools|deploy_options"),
+    page: int = typer.Option(1, "--page"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Return one compact page of candidates saved in a run state."""
+
+    def run():
+        state = load_state(run_id)
+        rows = state.get(kind)
+        if not isinstance(rows, list):
+            raise AgentError("candidate_kind_not_found", f"run state 中没有候选列表: {kind}", "choose_kind_from_plan_output")
+        page_data = candidate_page(kind, rows, page=page, page_size=page_size)
+        return {
+            "run_id": run_id,
+            "state_kind": state.get("kind"),
+            **page_data,
+            "next_action": "choose_index_or_page_more" if page_data["has_more"] else "choose_index",
+        }
+
+    _emit(run)
+
+
 @dataset_app.command("list")
 def dataset_list(
     scenario: str = typer.Option(..., "--scenario"),
     catalog: str = typer.Option("PUBLISH", "--catalog"),
+    name: Optional[str] = typer.Option(None, "--name", help="按数据集名称模糊过滤"),
     limit: int = typer.Option(100, "--limit"),
+    page: int = typer.Option(1, "--page"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -330,13 +363,26 @@ def dataset_list(
 
     def run():
         scn = get_scenario(scenario)
-        _, client, workspace_id = _config_and_client(workspace)
-        rows = _query_datasets(client, workspace_id, scn, catalog=catalog, limit=limit)
+        config, client, workspace_id = _config_and_client(workspace)
+        rows = _query_datasets(client, workspace_id, scn, catalog=catalog, limit=limit, name=name)
+        state = base_state("dataset_list", scenario, config.env_type, workspace_id)
+        state["catalog"] = catalog
+        state["filters"] = {"name": name, "limit": limit}
+        state["datasets"] = rows
+        save_state(state)
+        page_data = candidate_page("datasets", rows, page=page, page_size=page_size)
         return {
+            "run_id": state["run_id"],
             "scenario": scenario,
             "catalog": catalog,
-            "datasets": rows,
-            "next_action": "choose_dataset" if rows else "dataset_import_or_publish_required",
+            "filters": state["filters"],
+            **page_data,
+            "next_page_command": (
+                f"pangu-agent candidates --run-id {state['run_id']} --kind datasets "
+                f"--page {page + 1} --page-size {page_data['page_size']} --json"
+                if page_data["has_more"] else ""
+            ),
+            "next_action": "choose_dataset_or_page_more" if rows else "dataset_import_or_publish_required",
         }
 
     _emit(run)
@@ -409,7 +455,10 @@ def dataset_import_submit(
 def dataset_publish_prepare(
     scenario: str = typer.Option(..., "--scenario"),
     source_catalog: str = typer.Option("ORIGINAL", "--source-catalog"),
+    name: Optional[str] = typer.Option(None, "--name", help="按源数据集名称模糊过滤"),
     limit: int = typer.Option(100, "--limit"),
+    page: int = typer.Option(1, "--page"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -418,17 +467,25 @@ def dataset_publish_prepare(
     def run():
         scn = get_scenario(scenario)
         config, client, workspace_id = _config_and_client(workspace)
-        sources = _query_datasets(client, workspace_id, scn, catalog=source_catalog, limit=limit)
+        sources = _query_datasets(client, workspace_id, scn, catalog=source_catalog, limit=limit, name=name)
         state = base_state("dataset_publish", scenario, config.env_type, workspace_id)
         state["source_catalog"] = source_catalog
+        state["filters"] = {"name": name, "limit": limit}
         state["sources"] = sources
         save_state(state)
+        page_data = candidate_page("sources", sources, page=page, page_size=page_size)
         return {
             "run_id": state["run_id"],
             "scenario": scenario,
             "source_catalog": source_catalog,
-            "sources": sources,
-            "next_action": "choose_sources" if sources else "dataset.import-validate",
+            "filters": state["filters"],
+            **page_data,
+            "next_page_command": (
+                f"pangu-agent candidates --run-id {state['run_id']} --kind sources "
+                f"--page {page + 1} --page-size {page_data['page_size']} --json"
+                if page_data["has_more"] else ""
+            ),
+            "next_action": "choose_sources_or_page_more" if sources else "dataset.import-validate",
         }
 
     _emit(run)
@@ -511,6 +568,8 @@ def dataset_publish_submit(run_id: str = typer.Option(..., "--run-id")):
 def train_plan(
     scenario: str = typer.Option(..., "--scenario"),
     limit: int = typer.Option(100, "--limit"),
+    dataset_name: Optional[str] = typer.Option(None, "--dataset-name", help="按训练数据集名称模糊过滤"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -526,12 +585,14 @@ def train_plan(
             scn,
             catalog=scn["dataset"]["training_catalog"],
             limit=limit,
+            name=dataset_name,
         )
         pools = _query_pools(client, workspace_id, config.env_type, purpose="train")
         state = base_state("training", scenario, config.env_type, workspace_id)
         state["models"] = models
         state["datasets"] = datasets
         state["pools"] = pools
+        state["filters"] = {"limit": limit, "dataset_name": dataset_name}
         save_state(state)
         next_action = "choose_model_dataset_pool"
         if not models:
@@ -540,14 +601,24 @@ def train_plan(
             next_action = "dataset_import_or_publish_required"
         elif not pools:
             next_action = "check_resource_pools"
+        model_page = candidate_page("models", models, page=1, page_size=page_size)
+        dataset_page = candidate_page("datasets", datasets, page=1, page_size=page_size)
+        pool_page = candidate_page("pools", pools, page=1, page_size=page_size)
         return {
             "run_id": state["run_id"],
             "scenario": scenario,
             "env_type": config.env_type,
             "workspace_id": workspace_id,
-            "models": models,
-            "datasets": datasets,
-            "pools": pools,
+            "filters": state["filters"],
+            "models": model_page["models"],
+            "datasets": dataset_page["datasets"],
+            "pools": pool_page["pools"],
+            "candidate_pages": {
+                "models": page_metadata("models", models, page=1, page_size=page_size),
+                "datasets": page_metadata("datasets", datasets, page=1, page_size=page_size),
+                "pools": page_metadata("pools", pools, page=1, page_size=page_size),
+            },
+            "page_more_command": f"pangu-agent candidates --run-id {state['run_id']} --kind <models|datasets|pools> --page <n> --page-size {page_size} --json",
             "next_action": next_action,
         }
 
@@ -874,6 +945,7 @@ def train_published_assets(
 @deploy_app.command("plan")
 def deploy_plan(
     asset_id: str = typer.Option(..., "--asset-id"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, "--page-size"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
@@ -927,11 +999,18 @@ def deploy_plan(
         state["deploy_options"] = indexed_options
         state["pools"] = all_pools
         save_state(state)
+        option_page = candidate_page("deploy_options", indexed_options, page=1, page_size=page_size)
+        pool_page = candidate_page("pools", all_pools, page=1, page_size=page_size)
         return {
             "run_id": state["run_id"],
             "asset_id": asset_id,
-            "deploy_options": indexed_options,
-            "pools": all_pools,
+            "deploy_options": option_page["deploy_options"],
+            "pools": pool_page["pools"],
+            "candidate_pages": {
+                "deploy_options": page_metadata("deploy_options", indexed_options, page=1, page_size=page_size),
+                "pools": page_metadata("pools", all_pools, page=1, page_size=page_size),
+            },
+            "page_more_command": f"pangu-agent candidates --run-id {state['run_id']} --kind <deploy_options|pools> --page <n> --page-size {page_size} --json",
             "next_action": "choose_deploy_option_and_pool",
         }
 

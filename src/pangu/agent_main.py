@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 import traceback
 from importlib.metadata import version as get_version
@@ -77,9 +78,11 @@ app = typer.Typer(
 dataset_app = typer.Typer(help="Agent-safe dataset workflows")
 train_app = typer.Typer(help="Agent-safe training workflows")
 deploy_app = typer.Typer(help="Agent-safe deployment workflows")
+skill_app = typer.Typer(help="Manage Claude Code skill files")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(train_app, name="train")
 app.add_typer(deploy_app, name="deploy")
+app.add_typer(skill_app, name="skill")
 
 
 MODEL_EXT_PATH = "/v1/{project_id}/workspaces/{workspace_id}/asset-manager/model-assets-ext"
@@ -1572,6 +1575,105 @@ def deploy_status(
         if assets and isinstance(assets[0], dict) and "asset_type" not in data:
             data["asset_type"] = assets[0].get("asset_type", "")
         return {"service": data, "next_action": "poll_until_running_or_failed"}
+
+    _emit(run)
+
+
+def _skill_source_path() -> Path:
+    """Locate the bundled skill file inside the repo/package."""
+    # Editable install: agent_main.py is at src/pangu/agent_main.py
+    repo_root = Path(__file__).resolve().parents[2]
+    candidate = repo_root / ".claude" / "skills" / "pangu-agent" / "SKILL.md"
+    if candidate.exists():
+        return candidate
+    # Fallback: inside the installed package
+    pkg_root = Path(__file__).resolve().parent
+    candidate = pkg_root / "data" / "skills" / "pangu-agent" / "SKILL.md"
+    if candidate.exists():
+        return candidate
+    raise AgentError("skill_source_missing", "找不到内置的 SKILL.md 源文件", "check_installation")
+
+
+def _skill_dest_path() -> Path:
+    return Path.home() / ".claude" / "skills" / "pangu-agent" / "SKILL.md"
+
+
+@skill_app.command("install")
+def skill_install(force: bool = typer.Option(False, "--force")):
+    """Install the pangu-agent skill to ~/.claude/skills/."""
+
+    def run():
+        src = _skill_source_path()
+        dest = _skill_dest_path()
+        exists_before = dest.exists()
+        if exists_before and not force:
+            raise AgentError(
+                "skill_already_installed",
+                f"skill 已安装到 {dest}，使用 --force 覆盖",
+                "pass_force_or_skip",
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        return {
+            "installed_to": str(dest),
+            "exists_before": exists_before,
+            "force": force,
+            "next_action": "use_pangu_agent_skill",
+        }
+
+    _emit(run)
+
+
+@skill_app.command("uninstall")
+def skill_uninstall(yes: bool = typer.Option(False, "-y", "--yes")):
+    """Remove the pangu-agent skill from ~/.claude/skills/."""
+
+    def run():
+        dest = _skill_dest_path()
+        if not dest.exists():
+            raise AgentError("skill_not_installed", f"skill 未安装: {dest}", "skip_or_install")
+        if not yes and not typer.confirm(f"确认删除 {dest}?"):
+            raise typer.Abort()
+        dest.unlink()
+        return {"uninstalled_from": str(dest), "next_action": "continue"}
+
+    _emit(run)
+
+
+@skill_app.command("path")
+def skill_path():
+    """Show skill source and destination paths."""
+
+    def run():
+        src = _skill_source_path()
+        dest = _skill_dest_path()
+        return {
+            "source": str(src),
+            "destination": str(dest),
+            "installed": dest.exists(),
+            "next_action": "install_if_needed",
+        }
+
+    _emit(run)
+
+
+@skill_app.command("status")
+def skill_status():
+    """Check whether the pangu-agent skill is installed."""
+
+    def run():
+        dest = _skill_dest_path()
+        src = _skill_source_path()
+        installed = dest.exists()
+        up_to_date = False
+        if installed:
+            up_to_date = dest.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+        return {
+            "installed": installed,
+            "up_to_date": up_to_date,
+            "destination": str(dest),
+            "next_action": "install" if not installed else ("up_to_date" if up_to_date else "reinstall_with_force"),
+        }
 
     _emit(run)
 

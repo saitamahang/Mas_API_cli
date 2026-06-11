@@ -131,8 +131,9 @@ def _query_models(client: PanguClient, workspace_id: str, scenario: dict[str, An
         "asset_source": mq["source"],
         "asset_type": mq["type"],
         "sub_asset_type": mq["sub_type"],
-        "asset_action": mq["asset_action"],
     }
+    if mq.get("asset_action"):
+        params["asset_action"] = mq["asset_action"]
     data = client.get(MODEL_EXT_PATH, workspace_id=workspace_id, params=params)
     assets = (data.get("assets") if isinstance(data, dict) else None) or []
     rows = []

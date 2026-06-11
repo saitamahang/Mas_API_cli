@@ -21,7 +21,6 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "type": "CV",
             "sub_type": "IC",
             "source": "Preset",
-            "asset_action": "SFT",
         },
         "dataset": {
             "modal": "IMAGE",
@@ -59,7 +58,6 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "type": "CV",
             "sub_type": "ObjectDetection",
             "source": "Preset",
-            "asset_action": "SFT",
         },
         "dataset": {
             "modal": "IMAGE",
@@ -97,7 +95,6 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "type": "CV",
             "sub_type": "SS",
             "source": "Preset",
-            "asset_action": "SFT",
         },
         "dataset": {
             "modal": "IMAGE",
@@ -132,7 +129,6 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("model_query", "type"),
     ("model_query", "sub_type"),
     ("model_query", "source"),
-    ("model_query", "asset_action"),
     ("dataset", "modal"),
     ("dataset", "import", "content_type"),
     ("dataset", "import", "file_format"),

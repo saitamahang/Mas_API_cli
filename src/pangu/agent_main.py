@@ -47,6 +47,7 @@ from pangu.agent.goals import (
     transient_goal_state,
     with_goal_next_action,
 )
+from pangu.agent.published_assets import flatten_asset_ext, published_asset_query, select_published_asset
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
     RUNS_DIR,
@@ -155,26 +156,6 @@ def _goal_state(
     return state
 
 
-def _flatten_asset_ext(item: dict[str, Any]) -> dict[str, Any]:
-    ma = item.get("modelAsset") or {}
-    merged = dict(ma) if isinstance(ma, dict) else {}
-    for key in (
-        "can_deploy",
-        "can_train",
-        "can_delete",
-        "can_eval",
-        "can_quantize",
-        "can_export",
-        "model_id",
-        "is_used",
-        "publish_info",
-        "subscribe_info",
-    ):
-        if key in item:
-            merged[key] = item[key]
-    return merged
-
-
 def _query_models(client: PanguClient, workspace_id: str, scenario: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     mq = scenario["model_query"]
     params = {
@@ -192,10 +173,54 @@ def _query_models(client: PanguClient, workspace_id: str, scenario: dict[str, An
     for idx, item in enumerate(assets, start=1):
         if not isinstance(item, dict):
             continue
-        row = _flatten_asset_ext(item)
+        row = flatten_asset_ext(item)
         row["index"] = idx
         rows.append(row)
     return rows
+
+
+def _asset_id(row: dict[str, Any] | None) -> str:
+    if not row:
+        return ""
+    return str(row.get("asset_id") or row.get("id") or "")
+
+
+def _deploy_plan_command(asset_id: str, goal: str | None = None) -> str:
+    if not asset_id:
+        return ""
+    goal_part = f" --goal {goal}" if goal else ""
+    return f"pangu-agent deploy plan --asset-id {asset_id}{goal_part} --page-size 20 --json"
+
+
+def _resolve_published_asset(
+    client: PanguClient,
+    workspace_id: str,
+    *,
+    model_id: str | None = None,
+    asset_name: str | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    query_plans: list[dict[str, Any]] = []
+    query_plans.append(published_asset_query(asset_name, current_workspace=True))
+    query_plans.append(published_asset_query(asset_name, current_workspace=False))
+    if asset_name:
+        query_plans.append({"limit": 1000, "offset": 0, "asset_name": asset_name})
+
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    candidates: list[dict[str, Any]] = []
+    for params in query_plans:
+        key = tuple(sorted((str(k), str(v)) for k, v in params.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        data = client.get(MODEL_EXT_PATH, workspace_id=workspace_id, params=params)
+        assets = (data.get("assets") if isinstance(data, dict) else None) or []
+        rows = [flatten_asset_ext(item) for item in assets if isinstance(item, dict)]
+        if rows and not candidates:
+            candidates = rows
+        selected = select_published_asset(rows, model_id=model_id, asset_name=asset_name)
+        if selected:
+            return selected, rows
+    return None, candidates
 
 
 def _query_datasets(
@@ -1378,13 +1403,15 @@ def train_publish(
 
     def run():
         state = _goal_state(run_id, "training", goal, MODEL_PUBLISHED)
+        workspace_arg = workspace or state.get("workspace_id")
+        _, client, workspace_id = _config_and_client(workspace_arg)
         require_confirmation(confirm, PUBLISH_MODEL_CONFIRM)
         output = run_quietly(
             publish_model,
             task_id=task_id,
             asset_name=asset_name,
             visibility=visibility,
-            workspace=workspace or state.get("workspace_id"),
+            workspace=workspace_arg,
             execution_id=None,
             model_id=None,
             category=category,
@@ -1392,14 +1419,48 @@ def train_publish(
             fmt="json",
         )
         data = extract_first_json(output)
+        published_model_id = data.get("model_id") if isinstance(data, dict) else ""
+        published_asset, asset_candidates = _resolve_published_asset(
+            client,
+            workspace_id,
+            model_id=published_model_id,
+            asset_name=asset_name,
+        )
+        asset_id = _asset_id(published_asset)
+        publish_request = {
+            "task_id": task_id,
+            "asset_name": asset_name,
+            "visibility": visibility,
+            "category": category,
+            "description": description,
+        }
         if run_id:
+            state["publish_request"] = publish_request
             state["publish_result"] = data
+            if published_asset:
+                state["published_asset"] = published_asset
+                state["published_assets"] = [published_asset]
             save_state(state)
+        continue_action = "deploy.plan" if asset_id else "train.published-assets"
         return with_goal_next_action(
             state,
-            {"publish_result": data},
+            {
+                "publish_request": publish_request,
+                "publish_result": data,
+                "published_model_id": published_model_id,
+                "published_asset": published_asset,
+                "published_asset_id": asset_id,
+                "asset_resolution": {
+                    "resolved": bool(asset_id),
+                    "lookup": "model-assets-ext",
+                    "matched_by": "model_id+asset_name" if asset_id else "",
+                    "candidate_count": len(asset_candidates),
+                    "retry_command": f"pangu-agent train published-assets --run-id {run_id} --task-id {task_id} --json" if run_id else "",
+                },
+                "deploy_plan_command": _deploy_plan_command(asset_id, state.get("goal")),
+            },
             milestone=MODEL_PUBLISHED,
-            continue_action="train.published-assets_or_deploy.plan",
+            continue_action=continue_action,
         )
 
     _emit(run)
@@ -1409,11 +1470,12 @@ def train_publish(
 def train_published_assets(
     task_id: str = typer.Option(..., "--task-id"),
     run_id: Optional[str] = typer.Option(None, "--run-id"),
+    asset_name: Optional[str] = typer.Option(None, "--asset-name", help="Published asset name used to resolve asset_id"),
     goal: Optional[str] = typer.Option(None, "--goal", help="Workflow goal boundary for standalone asset resolution"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
 ):
-    """Resolve model outputs for a training task."""
+    """Resolve published model asset IDs for deployment."""
 
     def run():
         state = _goal_state(run_id, "training", goal, SERVICE_RUNNING)
@@ -1423,10 +1485,64 @@ def train_published_assets(
         if not execution_id:
             raise AgentError("missing_execution_id", "任务详情中没有 execution_id", "inspect_task_detail")
         data = client.get(TRAIN_MODELS_PATH, workspace_id=workspace_id, params={"execution_id": execution_id})
+        training_models = data.get("models", []) if isinstance(data, dict) else []
+        publish_request = state.get("publish_request") or {}
+        publish_result = state.get("publish_result") or {}
+        resolved_asset_name = asset_name or publish_request.get("asset_name")
+        target_model_ids = []
+        if isinstance(publish_result, dict) and publish_result.get("model_id"):
+            target_model_ids.append(str(publish_result.get("model_id")))
+        for item in training_models:
+            if isinstance(item, dict) and item.get("model_id"):
+                mid = str(item.get("model_id"))
+                if mid not in target_model_ids:
+                    target_model_ids.append(mid)
+
+        published_assets: list[dict[str, Any]] = []
+        asset_candidates: list[dict[str, Any]] = []
+        for model_id in target_model_ids or [""]:
+            selected, candidates = _resolve_published_asset(
+                client,
+                workspace_id,
+                model_id=model_id,
+                asset_name=resolved_asset_name,
+            )
+            if selected:
+                aid = _asset_id(selected)
+                if aid and all(_asset_id(row) != aid for row in published_assets):
+                    published_assets.append(selected)
+            for row in candidates:
+                aid = _asset_id(row)
+                if aid and all(_asset_id(existing) != aid for existing in asset_candidates):
+                    asset_candidates.append(row)
+
+        published_asset = published_assets[0] if len(published_assets) == 1 else None
+        asset_id = _asset_id(published_asset)
+        if run_id:
+            state["training_models"] = training_models
+            state["published_assets"] = published_assets
+            if published_asset:
+                state["published_asset"] = published_asset
+            save_state(state)
+        continue_action = "deploy.plan" if asset_id else "wait_or_retry_train.published-assets"
         return with_goal_next_action(
             state,
-            {"models": data.get("models", []) if isinstance(data, dict) else []},
-            continue_action="deploy.plan",
+            {
+                "models": training_models,
+                "training_models": training_models,
+                "published_assets": published_assets,
+                "published_asset": published_asset,
+                "published_asset_id": asset_id,
+                "asset_resolution": {
+                    "resolved": bool(asset_id),
+                    "lookup": "model-assets-ext",
+                    "target_model_ids": target_model_ids,
+                    "asset_name": resolved_asset_name,
+                    "candidate_count": len(asset_candidates),
+                },
+                "deploy_plan_command": _deploy_plan_command(asset_id, state.get("goal")),
+            },
+            continue_action=continue_action,
         )
 
     _emit(run)

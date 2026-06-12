@@ -216,6 +216,8 @@ Resolve outputs for deployment with:
 pangu-agent train published-assets --run-id <run_id> --task-id <task_id> --json
 ```
 
+Do not pass `publish_result.model_id` to deployment. Publishing returns a training model ID, while deployment requires a model asset ID. Use `published_asset_id`, `published_asset.asset_id`, or the returned `deploy_plan_command`. If asset resolution is not ready yet, rerun `train published-assets`; do not guess the asset ID.
+
 ## Deployment Workflow
 
 Deployment follows this state machine:
@@ -229,6 +231,8 @@ deploy plan -> user chooses option/pool -> scaffold -> validate -> user approves
 ```bash
 pangu-agent deploy plan --asset-id <asset_id> --goal deployment_submitted --page-size 20 --json
 ```
+
+`<asset_id>` must come from `published_asset_id` / `published_asset.asset_id` / `deploy_plan_command`, or from an existing model asset returned by `pangu-agent` candidates. Never use a training `model_id` as `--asset-id`.
 
 Use `--goal service_running` only when the user wants to wait until the service is running.
 

@@ -140,10 +140,11 @@ pangu-agent train scaffold \
 
 Do not edit the generated YAML unless the user explicitly asks. Use validate-time parameter overrides instead of editing YAML for training hyperparameters.
 The generated YAML is bound to the selected model, dataset, pool, and cards. To change any of those choices, rerun `train scaffold` with the new indexes and repeat the downstream steps.
+After scaffold, always run `train params` and show the full returned parameter list before validate. Do not skip this step even when the user does not plan to change hyperparameters.
 
 ### Params
 
-If the user wants to inspect or change training hyperparameters, list the real parameters from the generated YAML:
+List the real parameters from the generated YAML:
 
 ```bash
 pangu-agent train params --run-id <run_id> --json
@@ -168,6 +169,7 @@ pangu-agent train validate \
 ```
 
 Only continue if `ok: true`.
+Do not run validate until `train params` has succeeded for the current generated YAML. If validate returns `training_params_not_listed` or `training_params_stale`, run `train params` again and show the full returned parameter list.
 If validate returns `training_param_not_found`, follow `next_action`: rerun `train params` for user-supplied `--param` mistakes, or stop and ask for scenario parameter mapping when batch size cannot be resolved.
 If validate returns `training_param_index_not_found`, `protected_training_param`, or `duplicate_training_param_override`, rerun `train params` and ask the user to choose valid editable parameters.
 If validate returns `training_context_mismatch`, rerun `train scaffold`; do not patch the YAML or state by hand.

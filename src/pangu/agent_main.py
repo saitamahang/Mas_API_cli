@@ -1104,6 +1104,7 @@ def train_scaffold(
             "cards": cards,
         }
         body = load_yaml(artifact)
+        parameters = list_training_parameters_from_body(body)
         state["training_context"] = {
             "expected": expected_training_context(state),
             "actual": validate_training_context(state, body),
@@ -1111,13 +1112,18 @@ def train_scaffold(
         state["artifacts"]["train_yaml"] = str(artifact)
         state["validate_success"] = False
         state["artifact_hash"] = ""
+        state["params_listed"] = False
+        state.pop("params_artifact_hash", None)
         state.pop("approval", None)
         save_state(state)
         return with_goal_next_action(state, {
             "run_id": run_id,
             "train_yaml": str(artifact),
+            "parameters": parameters,
+            "parameter_count": len(parameters),
+            "params_command": f"pangu-agent train params --run-id {run_id} --json",
             "wrapped_output": output.strip(),
-        }, continue_action="train.validate")
+        }, continue_action="train.params")
 
     _emit(run)
 
@@ -1137,6 +1143,9 @@ def train_params(
         body = load_yaml(artifact)
         context = validate_training_context(state, body)
         parameters = list_training_parameters_from_body(body)
+        state["params_listed"] = True
+        state["params_artifact_hash"] = sha256_file(artifact)
+        save_state(state)
         return with_goal_next_action(state, {
             "run_id": run_id,
             "train_yaml": str(artifact),
@@ -1163,6 +1172,21 @@ def train_validate(
         if not artifact.exists():
             raise AgentError("artifact_missing", "训练 YAML 不存在", "run_train_scaffold")
         body = load_yaml(artifact)
+        artifact_hash = sha256_file(artifact)
+        if not state.get("params_listed") or not state.get("params_artifact_hash"):
+            raise AgentError(
+                "training_params_not_listed",
+                "validate 前必须先运行 train params 并向用户展示完整训练参数",
+                "run_train_params",
+                {"params_command": f"pangu-agent train params --run-id {run_id} --json"},
+            )
+        if state.get("params_artifact_hash") != artifact_hash:
+            raise AgentError(
+                "training_params_stale",
+                "训练 YAML 在 train params 后发生变化，必须重新列出训练参数",
+                "rerun_train_params",
+                {"params_command": f"pangu-agent train params --run-id {run_id} --json"},
+            )
         context = validate_training_context(state, body)
         scn = get_scenario(state["scenario"])
         _, client, workspace_id = _config_and_client(state.get("workspace_id"))
@@ -1210,7 +1234,7 @@ def train_validate(
             fmt="yaml",
         )
         state["validate_success"] = True
-        state["artifact_hash"] = sha256_file(artifact)
+        state["artifact_hash"] = artifact_hash
         state["validation"] = validation
         state["training_context"] = {
             "expected": expected_training_context(state),

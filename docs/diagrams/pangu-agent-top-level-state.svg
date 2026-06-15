@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="780" viewBox="0 0 1560 780" role="img" aria-label="pangu-agent 顶层状态机">
+
+<defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3"
+          orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L0,6 L9,3 z" fill="#27374d"/>
+  </marker>
+  <marker id="arrowMuted" markerWidth="10" markerHeight="10" refX="9" refY="3"
+          orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+  </marker>
+</defs>
+<style>
+  .bg { fill: #f8fafc; }
+  .title { font: 700 24px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #102033; }
+  .subtitle { font: 500 13px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #475569; }
+  .node { fill: #ffffff; stroke: #334155; stroke-width: 1.4; }
+  .nodeAccent { fill: #eef6ff; stroke: #2563eb; stroke-width: 1.4; }
+  .nodeWarn { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.4; }
+  .nodeStop { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.4; }
+  .nodeText { font: 600 14px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #0f172a; }
+  .smallText { font: 500 12px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #334155; }
+  .edge { stroke: #27374d; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .edgeMuted { stroke: #64748b; stroke-width: 1.3; fill: none; marker-end: url(#arrowMuted); }
+  .lifeline { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 5 5; }
+  .message { stroke: #27374d; stroke-width: 1.4; marker-end: url(#arrow); }
+  .returnMessage { stroke: #64748b; stroke-width: 1.3; stroke-dasharray: 5 4; marker-end: url(#arrowMuted); }
+  .loop { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 6 4; }
+</style>
+
+<rect class="bg" x="0" y="0" width="1560" height="780"/>
+<text class="title" x="780.0" y="36" text-anchor="middle">
+<tspan x="780.0" dy="0">pangu-agent 顶层状态机</tspan>
+</text>
+<text class="subtitle" x="780" y="60" text-anchor="middle">
+<tspan x="780" dy="0">goal 控制终点，状态迁移由 pangu-agent JSON 输出的 next_action 驱动</tspan>
+</text>
+<circle cx="75" cy="147" r="14" fill="#0f172a" stroke="#0f172a" stroke-width="1.4"/>
+<text class="smallText" x="75" y="190" text-anchor="middle">
+<tspan x="75" dy="0">Start</tspan>
+</text>
+<rect class="node" x="150" y="115" width="170" height="64" rx="10"/>
+<text class="nodeText" x="235.0" y="144.0" text-anchor="middle">
+<tspan x="235.0" dy="0">Doctor</tspan>
+<tspan x="235.0" dy="17">环境/认证</tspan>
+</text>
+<rect class="nodeWarn" x="150" y="300" width="170" height="64" rx="10"/>
+<text class="nodeText" x="235.0" y="329.0" text-anchor="middle">
+<tspan x="235.0" dy="0">FixConfig</tspan>
+<tspan x="235.0" dy="17">修复配置</tspan>
+</text>
+<rect class="node" x="430" y="115" width="180" height="64" rx="10"/>
+<text class="nodeText" x="520.0" y="144.0" text-anchor="middle">
+<tspan x="520.0" dy="0">Scenarios</tspan>
+<tspan x="520.0" dy="17">选择场景</tspan>
+</text>
+<rect class="nodeAccent" x="720" y="115" width="190" height="68" rx="10"/>
+<text class="nodeText" x="815.0" y="146.0" text-anchor="middle">
+<tspan x="815.0" dy="0">TrainingFlow</tspan>
+<tspan x="815.0" dy="17">训练</tspan>
+</text>
+<rect class="node" x="1010" y="115" width="190" height="68" rx="10"/>
+<text class="nodeText" x="1105.0" y="146.0" text-anchor="middle">
+<tspan x="1105.0" dy="0">ModelPublish</tspan>
+<tspan x="1105.0" dy="17">发布模型</tspan>
+</text>
+<rect class="node" x="720" y="370" width="190" height="68" rx="10"/>
+<text class="nodeText" x="815.0" y="401.0" text-anchor="middle">
+<tspan x="815.0" dy="0">DatasetFlow</tspan>
+<tspan x="815.0" dy="17">数据集准备</tspan>
+</text>
+<rect class="nodeAccent" x="1010" y="370" width="190" height="68" rx="10"/>
+<text class="nodeText" x="1105.0" y="401.0" text-anchor="middle">
+<tspan x="1105.0" dy="0">DeploymentFlow</tspan>
+<tspan x="1105.0" dy="17">部署</tspan>
+</text>
+<rect class="nodeStop" x="1285" y="240" width="165" height="72" rx="10"/>
+<text class="nodeText" x="1367.5" y="273.0" text-anchor="middle">
+<tspan x="1367.5" dy="0">Stop</tspan>
+<tspan x="1367.5" dy="17">goal 达成</tspan>
+</text>
+<line class="edge" x1="89" y1="147" x2="150" y2="147"/>
+<line class="edge" x1="320" y1="147" x2="430" y2="147"/>
+<rect x="352.75" y="125.0" width="44.5" height="23" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="375.0" y="139.0" text-anchor="middle">
+<tspan x="375.0" dy="0">ready</tspan>
+</text>
+<line class="edgeMuted" x1="235" y1="179" x2="235" y2="300"/>
+<rect x="199.75" y="217.5" width="70.5" height="23" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="235.0" y="231.5" text-anchor="middle">
+<tspan x="235.0" dy="0">not ready</tspan>
+</text>
+<path class="edgeMuted" d="M150,332 C121.0,257 121.0,85 92,160"/>
+<rect x="98.75" y="186.5" width="44.5" height="23" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="121.0" y="200.5" text-anchor="middle">
+<tspan x="121.0" dy="0">retry</tspan>
+</text>
+<line class="edge" x1="610" y1="147" x2="720" y2="147"/>
+<rect x="626.5" y="125.0" width="77.0" height="23" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="665.0" y="139.0" text-anchor="middle">
+<tspan x="665.0" dy="0">train goal</tspan>
+</text>
+<path class="edge" d="M520,179 C667.5,207 667.5,398 815,370"/>
+<rect x="622.5" y="266.5" width="90.0" height="23" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="667.5" y="280.5" text-anchor="middle">
+<tspan x="667.5" dy="0">need dataset</tspan>
+</text>
+<line class="edge" x1="815" y1="370" x2="815" y2="183"/>
+<rect x="766.75" y="254.5" width="96.5" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="815.0" y="268.5" text-anchor="middle">
+<tspan x="815.0" dy="0">goal beyond</tspan>
+<tspan x="815.0" dy="15">dataset_ready</tspan>
+</text>
+<path class="edgeMuted" d="M910,405 C1097.5,440 1097.5,311 1285,276"/>
+<rect x="1049.25" y="336.0" width="96.5" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="1097.5" y="350.0" text-anchor="middle">
+<tspan x="1097.5" dy="0">goal</tspan>
+<tspan x="1097.5" dy="15">dataset_ready</tspan>
+</text>
+<line class="edge" x1="910" y1="149" x2="1010" y2="149"/>
+<rect x="898.75" y="127.0" width="122.5" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="960.0" y="141.0" text-anchor="middle">
+<tspan x="960.0" dy="0">model_published /</tspan>
+<tspan x="960.0" dy="15">service_running</tspan>
+</text>
+<path class="edgeMuted" d="M815,183 C1050.0,205 1050.0,298 1285,276"/>
+<rect x="979.0" y="218.5" width="142.0" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="1050.0" y="232.5" text-anchor="middle">
+<tspan x="1050.0" dy="0">training_submitted /</tspan>
+<tspan x="1050.0" dy="15">training_completed</tspan>
+</text>
+<line class="edgeMuted" x1="1200" y1="149" x2="1285" y2="260"/>
+<rect x="1187.75" y="182.5" width="109.5" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="1242.5" y="196.5" text-anchor="middle">
+<tspan x="1242.5" dy="0">goal</tspan>
+<tspan x="1242.5" dy="15">model_published</tspan>
+</text>
+<line class="edge" x1="1105" y1="183" x2="1105" y2="370"/>
+<rect x="1050.25" y="254.5" width="109.5" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="1105.0" y="268.5" text-anchor="middle">
+<tspan x="1105.0" dy="0">goal</tspan>
+<tspan x="1105.0" dy="15">service_running</tspan>
+</text>
+<line class="edgeMuted" x1="1200" y1="405" x2="1285" y2="276"/>
+<rect x="1165.0" y="318.5" width="155.0" height="38" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="1242.5" y="332.5" text-anchor="middle">
+<tspan x="1242.5" dy="0">deployment_submitted /</tspan>
+<tspan x="1242.5" dy="15">service_running</tspan>
+</text>
+<path class="edge" d="M610,147 C810.0,242 810.0,500 1010,405"/>
+<rect x="735.75" y="301.5" width="148.5" height="23" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="810.0" y="315.5" text-anchor="middle">
+<tspan x="810.0" dy="0">deploy existing asset</tspan>
+</text>
+</svg>

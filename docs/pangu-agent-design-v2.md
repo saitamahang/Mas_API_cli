@@ -213,9 +213,13 @@ Run state 存储在 `~/.pangu/agent_runs/<run_id>.json`。
 - schema_version 目前没有迁移机制。
 - 并发写入没有文件锁。
 
-## 7. Workflow 状态机
+## 7. Workflow 状态机与时序图
 
-### 7.1 顶层流程
+本节提供可直接查看的 SVG 图片，同时保留 Mermaid 源码，便于后续维护和重新渲染。图片生成脚本位于 `docs/diagrams/render_pangu_agent_diagrams.py`。
+
+### 7.1 顶层状态机
+
+![pangu-agent 顶层状态机](diagrams/pangu-agent-top-level-state.svg)
 
 ```mermaid
 stateDiagram-v2
@@ -238,7 +242,9 @@ stateDiagram-v2
     DeploymentFlow --> Stop: goal deployment_submitted/service_running
 ```
 
-### 7.2 数据集发布流程
+### 7.2 数据集发布时序图
+
+![数据集发布时序图](diagrams/pangu-agent-dataset-publish-sequence.svg)
 
 ```mermaid
 sequenceDiagram
@@ -273,7 +279,9 @@ sequenceDiagram
 - 发布请求 ID 只作为诊断信息，不作为训练 ready 信号。
 - 训练 ready 信号是 v1 detail 接口查询到 `catalog=PUBLISH` 且 `status=ONLINE`。
 
-### 7.3 训练流程
+### 7.3 训练流程时序图
+
+![训练流程时序图](diagrams/pangu-agent-training-sequence.svg)
 
 ```mermaid
 sequenceDiagram
@@ -325,7 +333,9 @@ sequenceDiagram
     CLI-->>Agent: task + terminal/next_action
 ```
 
-### 7.4 模型发布与部署资产解析
+### 7.4 模型发布与部署资产解析时序图
+
+![模型发布与部署资产解析时序图](diagrams/pangu-agent-model-publish-sequence.svg)
 
 ```mermaid
 sequenceDiagram
@@ -352,7 +362,9 @@ sequenceDiagram
 - `pangu-agent` 不允许把 `model_id` 当作 `--asset-id`。
 - 如果资产中心存在延迟，agent 应运行 `train published-assets` 重试解析。
 
-### 7.5 部署流程
+### 7.5 部署流程时序图
+
+![部署流程时序图](diagrams/pangu-agent-deployment-sequence.svg)
 
 ```mermaid
 sequenceDiagram

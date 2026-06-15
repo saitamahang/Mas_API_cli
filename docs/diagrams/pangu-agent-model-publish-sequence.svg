@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1130" height="717" viewBox="0 0 1130 717" role="img" aria-label="模型发布与部署资产解析时序图">
+
+<defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3"
+          orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L0,6 L9,3 z" fill="#27374d"/>
+  </marker>
+  <marker id="arrowMuted" markerWidth="10" markerHeight="10" refX="9" refY="3"
+          orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+  </marker>
+</defs>
+<style>
+  .bg { fill: #f8fafc; }
+  .title { font: 700 24px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #102033; }
+  .subtitle { font: 500 13px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #475569; }
+  .node { fill: #ffffff; stroke: #334155; stroke-width: 1.4; }
+  .nodeAccent { fill: #eef6ff; stroke: #2563eb; stroke-width: 1.4; }
+  .nodeWarn { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.4; }
+  .nodeStop { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.4; }
+  .nodeText { font: 600 14px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #0f172a; }
+  .smallText { font: 500 12px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; fill: #334155; }
+  .edge { stroke: #27374d; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .edgeMuted { stroke: #64748b; stroke-width: 1.3; fill: none; marker-end: url(#arrowMuted); }
+  .lifeline { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 5 5; }
+  .message { stroke: #27374d; stroke-width: 1.4; marker-end: url(#arrow); }
+  .returnMessage { stroke: #64748b; stroke-width: 1.3; stroke-dasharray: 5 4; marker-end: url(#arrowMuted); }
+  .loop { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 6 4; }
+</style>
+
+<rect class="bg" x="0" y="0" width="1130" height="717"/>
+<text class="title" x="565.0" y="36" text-anchor="middle">
+<tspan x="565.0" dy="0">模型发布与部署资产解析时序图</tspan>
+</text>
+<rect class="nodeAccent" x="19.0" y="78" width="142" height="44" rx="8"/>
+<text class="nodeText" x="90.0" y="105" text-anchor="middle">
+<tspan x="90.0" dy="0">Agent</tspan>
+</text>
+<line class="lifeline" x1="90.0" y1="122" x2="90.0" y2="667"/>
+<rect class="nodeAccent" x="256.5" y="78" width="142" height="44" rx="8"/>
+<text class="nodeText" x="327.5" y="105" text-anchor="middle">
+<tspan x="327.5" dy="0">pangu-agent</tspan>
+</text>
+<line class="lifeline" x1="327.5" y1="122" x2="327.5" y2="667"/>
+<rect class="nodeAccent" x="494.0" y="78" width="142" height="44" rx="8"/>
+<text class="nodeText" x="565.0" y="105" text-anchor="middle">
+<tspan x="565.0" dy="0">pangu training</tspan>
+</text>
+<line class="lifeline" x1="565.0" y1="122" x2="565.0" y2="667"/>
+<rect class="nodeAccent" x="731.5" y="78" width="142" height="44" rx="8"/>
+<text class="nodeText" x="802.5" y="105" text-anchor="middle">
+<tspan x="802.5" dy="0">Pangu API</tspan>
+</text>
+<line class="lifeline" x1="802.5" y1="122" x2="802.5" y2="667"/>
+<rect class="nodeAccent" x="969.0" y="78" width="142" height="44" rx="8"/>
+<text class="nodeText" x="1040.0" y="105" text-anchor="middle">
+<tspan x="1040.0" dy="0">Run State</tspan>
+</text>
+<line class="lifeline" x1="1040.0" y1="122" x2="1040.0" y2="667"/>
+<line class="message" x1="90.0" y1="158" x2="327.5" y2="158"/>
+<rect x="53.75" y="125" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="208.75" y="142" text-anchor="middle">
+<tspan x="208.75" dy="0">train publish --run-id --task-id</tspan>
+<tspan x="208.75" dy="14">--asset-name --confirm publish-model</tspan>
+</text>
+<line class="message" x1="327.5" y1="216" x2="565.0" y2="216"/>
+<rect x="291.25" y="183" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="446.25" y="200" text-anchor="middle">
+<tspan x="446.25" dy="0">publish_model(...)</tspan>
+</text>
+<line class="returnMessage" x1="565.0" y1="274" x2="327.5" y2="274"/>
+<rect x="291.25" y="241" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="446.25" y="258" text-anchor="middle">
+<tspan x="446.25" dy="0">publish_result.model_id</tspan>
+</text>
+<line class="message" x1="327.5" y1="332" x2="802.5" y2="332"/>
+<rect x="410.0" y="299" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="565.0" y="316" text-anchor="middle">
+<tspan x="565.0" dy="0">_resolve_published_asset(model_id,</tspan>
+<tspan x="565.0" dy="14">asset_name)</tspan>
+</text>
+<line class="returnMessage" x1="802.5" y1="390" x2="327.5" y2="390"/>
+<rect x="410.0" y="357" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="565.0" y="374" text-anchor="middle">
+<tspan x="565.0" dy="0">model-assets-ext assets</tspan>
+</text>
+<path class="message" d="M327.5,448 L397.5,448 L397.5,476 L331.5,476"/>
+<text class="smallText" x="405.5" y="441" text-anchor="start">
+<tspan x="405.5" dy="0">select_published_asset()</tspan>
+</text>
+<line class="message" x1="327.5" y1="506" x2="1040.0" y2="506"/>
+<rect x="528.75" y="473" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="683.75" y="490" text-anchor="middle">
+<tspan x="683.75" dy="0">save published_asset</tspan>
+</text>
+<line class="returnMessage" x1="327.5" y1="564" x2="90.0" y2="564"/>
+<rect x="53.75" y="531" width="310" height="27" rx="5" fill="#f8fafc" opacity="0.94"/>
+<text class="smallText" x="208.75" y="548" text-anchor="middle">
+<tspan x="208.75" dy="0">published_model_id +</tspan>
+<tspan x="208.75" dy="14">published_asset_id +</tspan>
+<tspan x="208.75" dy="14">deploy_plan_command</tspan>
+</text>
+</svg>

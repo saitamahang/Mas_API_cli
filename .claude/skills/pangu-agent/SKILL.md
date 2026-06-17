@@ -38,6 +38,32 @@ Goal defaults are conservative: dataset workflows default to `dataset_ready`, tr
 If the user expands the goal later, pass the new `--goal` on the next status/publish command that accepts it so the saved run state is updated.
 When `next_action` starts a new run, such as `train.plan` after dataset publish or `deploy.plan` after model resolution, pass the same `goal` value returned by the previous command.
 
+## Async Monitor Rules
+
+Long training and deployment waits should not be polled inside the main agent session. After `train submit` or `deploy submit`, if the user's goal is beyond the submitted milestone, create a detached monitor and then stop the main session.
+
+Use the configured monitor adapter/session:
+
+- `PANGU_MONITOR_ADAPTER`
+- `PANGU_MONITOR_SESSION_ID`
+- `PANGU_MONITOR_SESSION_TITLE` (optional)
+
+If these values are not available, ask the user to configure them or explicitly provide `--adapter` and `--session-id`. Do not invent a session id.
+
+Detached monitor creation:
+
+```bash
+pangu-agent monitor add \
+  --run-id <run_id> \
+  --adapter <adapter> \
+  --session-id <session_id> \
+  --session-title <session_title> \
+  --detach \
+  --json
+```
+
+The monitor reuses `pangu-agent train status` / `pangu-agent deploy status` in a background process and sends a user-like message back to the source session when the task reaches a terminal state. It must not auto-approve, auto-publish, or auto-deploy.
+
 ## Dataset Workflow
 
 Use this when the user needs to find, import, or publish training data.
@@ -191,11 +217,13 @@ pangu-agent train submit --run-id <run_id>
 
 Submit reuses the hyperparameter overrides recorded by validate. Do not pass new hyperparameters at submit time. If the user wants a different batch size or any other hyperparameter, rerun validate with the new values, then ask for approval again.
 
-After submit, stop if the response has `terminal: true`. If the workflow goal is beyond `training_submitted`, use the returned `status_command` or:
+After submit, stop if the response has `terminal: true`. If the workflow goal is beyond `training_submitted`, do not poll in the main session. Use the returned `monitor_add_template` and create a detached monitor:
 
 ```bash
-pangu-agent train status --run-id <run_id> --task-id <task_id> --json
+pangu-agent monitor add --run-id <run_id> --adapter <adapter> --session-id <session_id> --session-title <session_title> --detach --json
 ```
+
+After the monitor is created successfully, stop the main session. When the background monitor reports completion back into this session, continue from the returned `next_action`.
 
 ### Publish Training Output
 
@@ -269,14 +297,14 @@ pangu-agent deploy approve --run-id <run_id> --confirm deploy-service
 
 Only run this after the user approves the exact `approval_summary` returned by validate.
 
-### Submit and Poll
+### Submit and Async Monitor
 
 ```bash
 pangu-agent deploy submit --run-id <run_id>
-pangu-agent deploy status --run-id <run_id> --service-id <service_id> --json
+pangu-agent monitor add --run-id <run_id> --adapter <adapter> --session-id <session_id> --session-title <session_title> --detach --json
 ```
 
-After submit, stop if the response has `terminal: true`. If the workflow goal is `service_running`, poll status until `terminal: true`, `running`, or `failed`.
+After submit, stop if the response has `terminal: true`. If the workflow goal is `service_running`, create a detached monitor instead of polling in the main session. When the monitor reports `running` or a failure state back into this session, continue according to the returned message and existing workflow rules.
 
 ## Supported Initial Scenarios
 

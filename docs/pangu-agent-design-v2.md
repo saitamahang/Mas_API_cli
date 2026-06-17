@@ -945,7 +945,288 @@ train completed -> publish -> model-assets-ext delay -> retry -> deploy plan
 - 必填参数示例完整。
 - 不包含已废弃参数。
 
-## 13. 下一步路线图
+## 13. 异步 Monitor 扩展方案
+
+### 13.1 设计目标
+
+数据导入和数据集发布等待通常是短等待，可以保留 `--wait`。训练和推理部署不同，耗时可能很长，不应由 agent 主会话持续轮询。异步 Monitor 的目标是:
+
+1. 训练/部署提交后，主会话显式创建一个外部 monitor 任务。
+2. monitor 以独立进程运行，不占用 agent 主会话。
+3. monitor 复用现有 `pangu-agent train status` / `pangu-agent deploy status` 查询状态。
+4. 到终态后，调用可插拔三方 agent adapter。
+5. adapter 使用对应 agent SDK，向来源 `session_id` 对应会话发送一条用户消息。
+6. 原会话收到消息后，继续按照 skill 执行下一阶段。
+
+Monitor 不做 workflow 编排，不自动发布模型、不自动部署、不自动 approve。它只负责“长等待结束后，把事件送回来源会话”。
+
+### 13.2 与现有逻辑的衔接点
+
+衔接点放在 submit 成功之后，保持显式两步:
+
+```text
+train/deploy submit
+  -> 保存 submit_result 到 run state
+  -> 返回 task_id/service_id、status_command、monitor_add_template
+
+skill
+  -> 如果目标超过 submitted milestone
+  -> 补齐 adapter + session_id + session_title
+  -> 执行 pangu-agent monitor add --run-id <run_id> ... --detach
+  -> 主会话停止等待
+
+monitor runner
+  -> 从 monitor task 读取 status_command
+  -> 循环执行 status command
+  -> 到终态后调用 adapter.send_message(...)
+```
+
+具体复用点:
+
+- `train submit`: 已保存 `submit_result`，新增返回 `task_id` 和 `monitor_add_template`。
+- `deploy submit`: 已保存 `submit_result`，新增返回 `service_id` 和 `monitor_add_template`。
+- `monitor add`: 只接收 `run_id`，从 run state 读取真实 `task_id` / `service_id`，不让 agent 手填任务 ID。
+- `monitor run`: 复用 status command，而不是重写 Pangu API 查询逻辑。
+- skill: submit 后负责显式调用 `monitor add --detach`，因为只有当前 agent 会话知道 adapter/session 信息。
+
+### 13.3 流程图
+
+```mermaid
+sequenceDiagram
+    participant Agent as Agent 主会话
+    participant CLI as pangu-agent
+    participant State as Run State
+    participant Monitor as Monitor Runner
+    participant Adapter as Agent Adapter
+    participant Session as 来源会话
+
+    Agent->>CLI: train/deploy submit
+    CLI->>State: save submit_result
+    CLI-->>Agent: status_command + monitor_add_template
+
+    Agent->>CLI: monitor add --run-id --adapter --session-id --detach
+    CLI->>State: load submit_result
+    CLI->>State: save monitor task
+    CLI->>Monitor: start detached runner
+    CLI-->>Agent: monitor_id + stop_waiting_in_main_session
+
+    loop until terminal or timeout
+        Monitor->>CLI: run status_command
+        CLI-->>Monitor: task/service status JSON
+    end
+
+    Monitor->>State: save terminal_payload
+    Monitor->>Adapter: send_message(session, message, payload)
+    Adapter->>Session: user-like message
+```
+
+### 13.4 MonitorTask 数据模型
+
+Monitor task 存储在 `~/.pangu/agent_monitors/<monitor_id>.json`。
+
+```json
+{
+  "schema_version": 1,
+  "monitor_id": "monitor_training_20260617_120000",
+  "kind": "training",
+  "run_id": "training_20260617_115900",
+  "target_id": "task_abc",
+  "status_command": [
+    "pangu-agent",
+    "train",
+    "status",
+    "--run-id",
+    "training_20260617_115900",
+    "--task-id",
+    "task_abc",
+    "--json"
+  ],
+  "adapter": "webhook",
+  "session": {
+    "session_id": "sess_123",
+    "session_title": "Mas 训练任务会话"
+  },
+  "success_message": "训练任务已完成，请继续下一步。",
+  "failure_message": "训练任务已结束但未成功，请检查失败原因。",
+  "interval_seconds": 60,
+  "timeout_seconds": 86400,
+  "max_delivery_attempts": 8,
+  "monitor_status": "watching",
+  "delivery_status": "pending"
+}
+```
+
+`session_id` 是通用会话主键，由 adapter 使用；`session_title` 只用于审计、日志和排查，不参与寻址。
+
+### 13.5 命令设计
+
+创建训练 monitor:
+
+```bash
+pangu-agent monitor add \
+  --run-id training_xxx \
+  --adapter webhook \
+  --session-id sess_123 \
+  --session-title "Mas 训练任务会话" \
+  --detach \
+  --json
+```
+
+创建部署 monitor:
+
+```bash
+pangu-agent monitor add \
+  --run-id deployment_xxx \
+  --adapter webhook \
+  --session-id sess_123 \
+  --session-title "Mas 推理部署会话" \
+  --detach \
+  --json
+```
+
+辅助命令:
+
+```bash
+pangu-agent monitor run --monitor-id <monitor_id> --json
+pangu-agent monitor list --json
+pangu-agent monitor status --monitor-id <monitor_id> --json
+pangu-agent monitor cancel --monitor-id <monitor_id> --json
+pangu-agent monitor retry-delivery --monitor-id <monitor_id> --json
+pangu-agent monitor message --monitor-id <monitor_id> --json
+```
+
+### 13.6 状态查询与终态判断
+
+第一版 monitor 复用 CLI，不直接查 Pangu API:
+
+```text
+training:
+  pangu-agent train status --run-id <run_id> --task-id <task_id> --json
+
+deployment:
+  pangu-agent deploy status --run-id <run_id> --service-id <service_id> --json
+```
+
+终态规则:
+
+| 类型 | 成功终态 | 失败终态 | 继续等待 |
+| --- | --- | --- | --- |
+| training | `completed` | `failed`, `stopped` | 其他状态 |
+| deployment | `running` | `failed`, `stopped` | 其他状态 |
+
+### 13.7 三方 Agent Adapter 接口
+
+Monitor 不关心三方 agent 如何发送消息，只调用统一接口:
+
+```python
+class AgentAdapter:
+    name = "base"
+    required_session_fields = ("session_id",)
+
+    def send_message(self, session: dict, message: str, payload: dict) -> None:
+        raise NotImplementedError
+```
+
+明确 SDK 对接样例:
+
+```python
+from pangu.agent_monitor.adapters.base import AgentAdapter
+from vendor_agent_sdk import VendorAgentClient
+
+
+class VendorAgentAdapter(AgentAdapter):
+    name = "vendor_agent"
+    required_session_fields = ("session_id",)
+
+    def __init__(self) -> None:
+        self.client = VendorAgentClient.from_env()
+
+    def send_message(self, session: dict, message: str, payload: dict) -> None:
+        self.validate_session(session)
+        self.client.sessions.send_message(
+            session_id=session["session_id"],
+            content=message,
+            metadata={
+                "source": "pangu-agent-monitor",
+                "session_title": session.get("session_title"),
+                "run_id": payload.get("run_id"),
+                "kind": payload.get("kind"),
+                "target_id": payload.get("target_id"),
+                "terminal_status": payload.get("terminal_status"),
+                "next_action": payload.get("next_action"),
+            },
+        )
+```
+
+通用 webhook adapter 适用于支持 HTTP callback 的 agent 平台:
+
+```json
+{
+  "session_id": "sess_123",
+  "session_title": "Mas 训练任务会话",
+  "url": "https://agent.example.com/callback",
+  "headers": {
+    "Authorization": "Bearer <token>"
+  }
+}
+```
+
+```bash
+pangu-agent monitor add \
+  --run-id training_xxx \
+  --adapter webhook \
+  --session-json '{"session_id":"sess_123","session_title":"Mas 训练任务会话","url":"https://agent.example.com/callback"}' \
+  --detach \
+  --json
+```
+
+### 13.8 投递失败处理
+
+任务终态和消息投递分离:
+
+```text
+monitor_status: completed / failed / stopped / timeout
+delivery_status: pending / retrying / delivered / failed
+```
+
+终态检测成功后，monitor 先保存 `terminal_payload`，再尝试 `send_message`。如果 SDK 客户端关闭、会话不可用、认证过期或网络失败:
+
+1. 按有限次数重试。
+2. 重试失败后写入 `~/.pangu/agent_monitor_dead_letters/<monitor_id>.json`。
+3. `delivery_status=failed`。
+4. 用户可使用 `monitor retry-delivery` 改投递目标，或用 `monitor message` 导出消息手动发送。
+
+这样保证“任务结果不丢，自动回写尽力而为，失败后可人工恢复”。
+
+### 13.9 新增与修改清单
+
+新增:
+
+- `src/pangu/agent_monitor/models.py`: monitor task 数据模型。
+- `src/pangu/agent_monitor/store.py`: monitor JSON 存储和 dead-letter。
+- `src/pangu/agent_monitor/status.py`: 从 run state 生成 status command，判断终态。
+- `src/pangu/agent_monitor/runner.py`: 外部循环、终态落盘、投递重试。
+- `src/pangu/agent_monitor/adapters/base.py`: adapter 接口。
+- `src/pangu/agent_monitor/adapters/example_sdk.py`: 三方 SDK 示例 adapter。
+- `src/pangu/agent_monitor/adapters/webhook.py`: 通用 webhook adapter。
+- `pangu-agent monitor add/run/list/status/cancel/retry-delivery/message`。
+
+修改:
+
+- `train submit`: 返回 `task_id` 和 `monitor_add_template`。
+- `deploy submit`: 返回 `service_id` 和 `monitor_add_template`。
+- `SKILL.md`: submit 后目标超过 submitted 时创建 detached monitor，不在主会话轮询。
+- 设计文档: 增加异步 Monitor 方案、状态投递模型和 adapter 接入方法。
+
+不修改:
+
+- 不改变 validate / approval / submit 的门禁。
+- 不让 monitor 自动 publish / deploy / approve。
+- 不让 `pangu-agent` 猜 session。
+- 不替代现有 `train status` / `deploy status`。
+- 数据导入和数据集发布短等待保持现状。
+
+## 14. 下一步路线图
 
 ### P0: 稳定性修复
 
@@ -953,6 +1234,7 @@ train completed -> publish -> model-assets-ext delay -> retry -> deploy plan
 2. 用 FakePanguClient 补齐完整 workflow 集成测试。
 3. 重构 `run_quietly` 的最高风险路径，优先训练和部署 submit。
 4. 发布资产解析增加 `--wait`，解决资产中心最终一致性。
+5. 为 async monitor 增加真实三方 agent adapter 的集成测试。
 
 ### P1: 架构重构
 
@@ -961,6 +1243,7 @@ train completed -> publish -> model-assets-ext delay -> retry -> deploy plan
 3. 建立 JSON contract 测试。
 4. 建立 skill 示例命令测试。
 5. 增加 submit 幂等机制。
+6. 增加 monitor delivery 的可观测性和清理策略。
 
 ### P2: 平台化能力
 
@@ -970,7 +1253,7 @@ train completed -> publish -> model-assets-ext delay -> retry -> deploy plan
 4. workflow replay/debug 工具。
 5. 自动生成 skill 或 command reference。
 
-## 14. 验收标准
+## 15. 验收标准
 
 v2.0 后续优化完成时，应满足:
 
@@ -981,10 +1264,11 @@ v2.0 后续优化完成时，应满足:
 - 训练前完整参数已展示，且 validate 使用同一 YAML。
 - 发布后部署使用 `asset_id`，不是 `model_id`。
 - 只训练、只部署、完整链路都受 `goal` 控制。
+- 长训练/部署等待由 detached monitor 接管，不占用主会话。
 - 所有关键路径有 FakePanguClient 集成测试。
 - Skill 示例命令能被自动校验。
 
-## 15. 结论
+## 16. 结论
 
 当前 `pangu-agent` 已经从“给 agent 的命令包装器”演进为“有状态、有目标边界、有审批门禁的 agent workflow 协议层”。它已经解决了 agent 乱猜参数、跳过确认、数据集未 ready、发布模型 ID 与部署资产 ID 混淆、跳过超参数展示等关键问题。
 

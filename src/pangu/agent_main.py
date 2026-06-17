@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import time
 import traceback
@@ -67,6 +68,10 @@ from pangu.agent.training_params import (
 )
 from pangu.agent.training_context import expected_training_context, validate_training_context
 from pangu.agent.utils import extract_first_json, failure, print_json, run_quietly, success
+from pangu.agent_monitor.models import MONITOR_CANCELLED
+from pangu.agent_monitor.runner import monitor_message, retry_delivery, run_monitor, start_detached_monitor
+from pangu.agent_monitor.status import monitor_task_from_run
+from pangu.agent_monitor.store import list_monitors, load_monitor, save_monitor
 from pangu.auth import AuthManager
 from pangu.client import APIError, PanguClient
 from pangu.commands.model import DETAIL_PATH as MODEL_DETAIL_PATH, _extract_resource_info
@@ -89,10 +94,12 @@ app = typer.Typer(
 dataset_app = typer.Typer(help="Agent-safe dataset workflows")
 train_app = typer.Typer(help="Agent-safe training workflows")
 deploy_app = typer.Typer(help="Agent-safe deployment workflows")
+monitor_app = typer.Typer(help="Async monitors for long-running agent workflows")
 skill_app = typer.Typer(help="Manage Claude Code skill files")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(train_app, name="train")
 app.add_typer(deploy_app, name="deploy")
+app.add_typer(monitor_app, name="monitor")
 app.add_typer(skill_app, name="skill")
 
 
@@ -190,6 +197,53 @@ def _deploy_plan_command(asset_id: str, goal: str | None = None) -> str:
         return ""
     goal_part = f" --goal {goal}" if goal else ""
     return f"pangu-agent deploy plan --asset-id {asset_id}{goal_part} --page-size 20 --json"
+
+
+def _monitor_add_template(run_id: str) -> str:
+    return (
+        f"pangu-agent monitor add --run-id {run_id} --adapter <adapter> "
+        "--session-id <session_id> --session-title <session_title> --detach"
+    )
+
+
+def _monitor_adapter(adapter: str | None) -> str:
+    value = adapter or os.environ.get("PANGU_MONITOR_ADAPTER", "")
+    if not value:
+        raise AgentError("missing_monitor_adapter", "缺少 monitor adapter", "pass_adapter_or_set_env")
+    return value
+
+
+def _monitor_session(
+    *,
+    session_id: str | None = None,
+    session_title: str | None = None,
+    session_json: str | None = None,
+    session_file: Path | None = None,
+) -> dict[str, Any]:
+    session: dict[str, Any] = {}
+    if session_file:
+        try:
+            session = json.loads(session_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise AgentError("invalid_monitor_session_file", str(e), "pass_valid_session_file") from e
+    if session_json:
+        try:
+            parsed = json.loads(session_json)
+        except json.JSONDecodeError as e:
+            raise AgentError("invalid_monitor_session_json", str(e), "pass_valid_session_json") from e
+        if not isinstance(parsed, dict):
+            raise AgentError("invalid_monitor_session_json", "session-json 必须是 JSON object", "pass_valid_session_json")
+        session.update(parsed)
+
+    env_session_id = os.environ.get("PANGU_MONITOR_SESSION_ID")
+    env_session_title = os.environ.get("PANGU_MONITOR_SESSION_TITLE")
+    if session_id or env_session_id:
+        session["session_id"] = session_id or env_session_id
+    if session_title or env_session_title:
+        session["session_title"] = session_title or env_session_title
+    if not session.get("session_id"):
+        raise AgentError("missing_monitor_session", "缺少 monitor session_id", "pass_session_id_or_set_env")
+    return session
 
 
 def _resolve_published_asset(
@@ -1363,11 +1417,14 @@ def train_submit(
         return with_goal_next_action(
             state,
             {
+                "run_id": run_id,
                 "task": data,
+                "task_id": task_id,
                 "status_command": (
                     f"pangu-agent train status --run-id {run_id} --task-id {task_id} --json"
                     if task_id else ""
                 ),
+                "monitor_add_template": _monitor_add_template(run_id) if task_id else "",
             },
             milestone=TRAINING_SUBMITTED,
             continue_action="train.status",
@@ -1820,11 +1877,14 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
         return with_goal_next_action(
             state,
             {
+                "run_id": run_id,
                 "service": data,
+                "service_id": service_id,
                 "status_command": (
                     f"pangu-agent deploy status --run-id {run_id} --service-id {service_id} --json"
                     if service_id else ""
                 ),
+                "monitor_add_template": _monitor_add_template(run_id) if service_id else "",
             },
             milestone=DEPLOYMENT_SUBMITTED,
             continue_action="deploy.status",
@@ -1869,6 +1929,152 @@ def deploy_status(
         return result
 
     _emit(run)
+
+
+@monitor_app.command("add")
+def monitor_add(
+    run_id: str = typer.Option(..., "--run-id"),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Agent adapter name; defaults to PANGU_MONITOR_ADAPTER"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Source agent session id"),
+    session_title: Optional[str] = typer.Option(None, "--session-title", help="Human-readable session title"),
+    session_json: Optional[str] = typer.Option(None, "--session-json", help="Opaque adapter session JSON object"),
+    session_file: Optional[Path] = typer.Option(None, "--session-file", help="File containing adapter session JSON object"),
+    detach: bool = typer.Option(False, "--detach", help="Start a detached monitor runner"),
+    interval: int = typer.Option(60, "--interval", help="Polling interval in seconds"),
+    timeout: int = typer.Option(86400, "--timeout", help="Monitor timeout in seconds"),
+    max_delivery_attempts: int = typer.Option(8, "--max-delivery-attempts"),
+    success_message: Optional[str] = typer.Option(None, "--success-message"),
+    failure_message: Optional[str] = typer.Option(None, "--failure-message"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Create an async monitor from a submitted training/deployment run."""
+
+    def run():
+        adapter_name = _monitor_adapter(adapter)
+        session = _monitor_session(
+            session_id=session_id,
+            session_title=session_title,
+            session_json=session_json,
+            session_file=session_file,
+        )
+        task = monitor_task_from_run(
+            run_id=run_id,
+            adapter=adapter_name,
+            session=session,
+            session_title=str(session.get("session_title") or ""),
+            interval_seconds=interval,
+            timeout_seconds=timeout,
+            max_delivery_attempts=max_delivery_attempts,
+            success_message=success_message,
+            failure_message=failure_message,
+        )
+        save_monitor(task)
+        detach_info = start_detached_monitor(task.monitor_id) if detach else {}
+        return {
+            "monitor_id": task.monitor_id,
+            "monitor": task.to_dict(),
+            "detached": bool(detach_info),
+            "detach": detach_info,
+            "next_action": "stop_waiting_in_main_session" if detach else "monitor.run",
+        }
+
+    _emit(run)
+
+
+@monitor_app.command("run")
+def monitor_run(
+    monitor_id: str = typer.Option(..., "--monitor-id"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Run a monitor loop until terminal state, timeout, or cancel."""
+
+    def run():
+        task = run_monitor(monitor_id)
+        return {"monitor_id": task.monitor_id, "monitor": task.to_dict(), "next_action": "stop"}
+
+    _emit(run)
+
+
+@monitor_app.command("list")
+def monitor_list(
+    delivery_status: Optional[str] = typer.Option(None, "--delivery-status"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """List local monitor tasks."""
+
+    _emit(lambda: {"monitors": list_monitors(delivery_status=delivery_status), "next_action": "continue"})
+
+
+@monitor_app.command("status")
+def monitor_status(
+    monitor_id: str = typer.Option(..., "--monitor-id"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Show a local monitor task."""
+
+    def run():
+        task = load_monitor(monitor_id)
+        return {"monitor_id": task.monitor_id, "monitor": task.to_dict(), "next_action": "continue"}
+
+    _emit(run)
+
+
+@monitor_app.command("cancel")
+def monitor_cancel(
+    monitor_id: str = typer.Option(..., "--monitor-id"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Mark a local monitor task as cancelled."""
+
+    def run():
+        task = load_monitor(monitor_id)
+        task.monitor_status = MONITOR_CANCELLED
+        save_monitor(task)
+        return {"monitor_id": task.monitor_id, "monitor": task.to_dict(), "next_action": "stop"}
+
+    _emit(run)
+
+
+@monitor_app.command("retry-delivery")
+def monitor_retry_delivery(
+    monitor_id: str = typer.Option(..., "--monitor-id"),
+    adapter: Optional[str] = typer.Option(None, "--adapter"),
+    session_id: Optional[str] = typer.Option(None, "--session-id"),
+    session_title: Optional[str] = typer.Option(None, "--session-title"),
+    session_json: Optional[str] = typer.Option(None, "--session-json"),
+    session_file: Optional[Path] = typer.Option(None, "--session-file"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Retry delivery for a terminal monitor, optionally to a new session."""
+
+    def run():
+        session = None
+        if session_id or session_title or session_json or session_file:
+            session = _monitor_session(
+                session_id=session_id,
+                session_title=session_title,
+                session_json=session_json,
+                session_file=session_file,
+            )
+        task = retry_delivery(
+            monitor_id,
+            adapter=adapter or os.environ.get("PANGU_MONITOR_ADAPTER") or None,
+            session=session,
+            session_title=session_title,
+        )
+        return {"monitor_id": task.monitor_id, "monitor": task.to_dict(), "next_action": "continue"}
+
+    _emit(run)
+
+
+@monitor_app.command("message")
+def monitor_message_cmd(
+    monitor_id: str = typer.Option(..., "--monitor-id"),
+    json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
+):
+    """Export the message that would be delivered for a terminal monitor."""
+
+    _emit(lambda: {"monitor_id": monitor_id, "message": monitor_message(monitor_id), "next_action": "manual_send"})
 
 
 def _skill_source_path() -> Path:

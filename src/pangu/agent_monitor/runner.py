@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from json import JSONDecoder
+import locale
 import subprocess
 import time
 from typing import Any, Callable
@@ -47,9 +48,24 @@ def extract_first_json(text: str) -> Any:
     raise AgentError("json_parse_failed", "未能从 status command 输出中解析 JSON", "inspect_status_command_output")
 
 
+def decode_process_output(data: bytes) -> str:
+    encodings = ["utf-8-sig", locale.getpreferredencoding(False)]
+    seen: set[str] = set()
+    for encoding in encodings:
+        normalized = (encoding or "").lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def run_json_command(command: list[str]) -> dict[str, Any]:
-    proc = subprocess.run(command, capture_output=True, text=True, check=False)
-    output = (proc.stdout or "") + (proc.stderr or "")
+    proc = subprocess.run(command, capture_output=True, check=False)
+    output = decode_process_output((proc.stdout or b"") + (proc.stderr or b""))
     if proc.returncode != 0:
         raise AgentError(
             "monitor_status_command_failed",

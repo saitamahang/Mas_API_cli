@@ -19,7 +19,7 @@ from pangu.agent_monitor import store as store_mod
 from pangu.agent_monitor.adapters.base import AdapterDeliveryError, AgentAdapter
 from pangu.agent_monitor.adapters import create_adapter
 from pangu.agent_monitor.models import DELIVERY_DELIVERED, DELIVERY_FAILED, MonitorTask
-from pangu.agent_monitor.runner import run_monitor
+from pangu.agent_monitor.runner import decode_process_output, run_monitor
 from pangu.agent_monitor.status import classify_status, monitor_task_from_run
 from pangu.agent_monitor.store import save_monitor
 
@@ -92,6 +92,16 @@ class AgentMonitorTests(unittest.TestCase):
         adapter = create_adapter("codeagent")
 
         self.assertEqual(adapter.name, "codeagent")
+
+    def test_decode_process_output_prefers_utf8(self):
+        text = '{"ok": true, "message": "训练任务已完成"}'
+
+        self.assertEqual(decode_process_output(text.encode("utf-8")), text)
+
+    def test_decode_process_output_replaces_invalid_bytes(self):
+        text = decode_process_output(b'{"ok": true, "message": "\xff"}')
+
+        self.assertIn('"ok": true', text)
 
     def test_monitor_task_from_deployment_run_uses_submit_result(self):
         state_mod.save_state(

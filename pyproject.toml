@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pangu-cli"
 version = "0.2.0"
-description = "盘古大模型平台管理 CLI"
+description = "盘古平台 CLI 与 agent 工作流工具"
 requires-python = ">=3.9"
 dependencies = [
     "typer[all]>=0.9.0",

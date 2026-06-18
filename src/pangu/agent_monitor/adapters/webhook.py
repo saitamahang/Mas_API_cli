@@ -16,7 +16,6 @@ class WebhookAdapter(AgentAdapter):
         headers = session.get("headers") or {}
         body = {
             "session_id": session["session_id"],
-            "session_title": session.get("session_title", ""),
             "message": message,
             "payload": payload,
         }

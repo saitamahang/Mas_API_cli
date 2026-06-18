@@ -32,6 +32,7 @@ class PanguConfig(BaseModel):
 
     # 默认上下文
     default_workspace_id: str = Field(default="", description="默认工作空间 ID")
+    monitor_adapter: str = Field(default="codeagent", description="pangu-agent monitor 默认回调适配器")
 
     # API Key 模式
     api_key: str = Field(default="", description="API Key (X-Apig-AppCode)")

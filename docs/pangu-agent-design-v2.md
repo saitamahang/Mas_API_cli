@@ -971,7 +971,7 @@ train/deploy submit
 
 skill
   -> 如果目标超过 submitted milestone
-  -> 补齐 adapter + session_id + session_title
+  -> 提供 session_id
   -> 执行 pangu-agent monitor add --run-id <run_id> ... --detach
   -> 主会话停止等待
 
@@ -987,7 +987,7 @@ monitor runner
 - `deploy submit`: 已保存 `submit_result`，新增返回 `service_id` 和 `monitor_add_template`。
 - `monitor add`: 只接收 `run_id`，从 run state 读取真实 `task_id` / `service_id`，不让 agent 手填任务 ID。
 - `monitor run`: 复用 status command，而不是重写 Pangu API 查询逻辑。
-- skill: submit 后负责显式调用 `monitor add --detach`，因为只有当前 agent 会话知道 adapter/session 信息。
+- skill: submit 后负责显式调用 `monitor add --detach`，只提供 `session_id`；adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
 
 ### 13.3 流程图
 
@@ -1004,7 +1004,7 @@ sequenceDiagram
     CLI->>State: save submit_result
     CLI-->>Agent: status_command + monitor_add_template
 
-    Agent->>CLI: monitor add --run-id --adapter --session-id --detach
+    Agent->>CLI: monitor add --run-id --session-id --detach
     CLI->>State: load submit_result
     CLI->>State: save monitor task
     CLI->>Monitor: start detached runner
@@ -1041,10 +1041,9 @@ Monitor task 存储在 `~/.pangu/agent_monitors/<monitor_id>.json`。
     "task_abc",
     "--json"
   ],
-  "adapter": "webhook",
+  "adapter": "codeagent",
   "session": {
-    "session_id": "sess_123",
-    "session_title": "Mas 训练任务会话"
+    "session_id": "sess_123"
   },
   "success_message": "训练任务已完成，请继续下一步。",
   "failure_message": "训练任务已结束但未成功，请检查失败原因。",
@@ -1056,7 +1055,7 @@ Monitor task 存储在 `~/.pangu/agent_monitors/<monitor_id>.json`。
 }
 ```
 
-`session_id` 是通用会话主键，由 adapter 使用；`session_title` 只用于审计、日志和排查，不参与寻址。
+`session_id` 是通用会话主键，由 adapter 使用。为保持协议简单，Monitor 通用层只要求这一项会话信息。
 
 ### 13.5 命令设计
 
@@ -1065,9 +1064,7 @@ Monitor task 存储在 `~/.pangu/agent_monitors/<monitor_id>.json`。
 ```bash
 pangu-agent monitor add \
   --run-id training_xxx \
-  --adapter webhook \
   --session-id sess_123 \
-  --session-title "Mas 训练任务会话" \
   --detach \
   --json
 ```
@@ -1077,11 +1074,21 @@ pangu-agent monitor add \
 ```bash
 pangu-agent monitor add \
   --run-id deployment_xxx \
-  --adapter webhook \
   --session-id sess_123 \
-  --session-title "Mas 推理部署会话" \
   --detach \
   --json
+```
+
+adapter 不由 agent 猜测，解析顺序为:
+
+1. `--adapter` 显式传入，仅用于调试或人工覆盖。
+2. `PANGU_MONITOR_ADAPTER` 环境变量。
+3. `pangu config` 中的 `monitor_adapter`。
+
+示例配置:
+
+```bash
+pangu config set monitor_adapter codeagent
 ```
 
 辅助命令:
@@ -1148,7 +1155,6 @@ class VendorAgentAdapter(AgentAdapter):
             content=message,
             metadata={
                 "source": "pangu-agent-monitor",
-                "session_title": session.get("session_title"),
                 "run_id": payload.get("run_id"),
                 "kind": payload.get("kind"),
                 "target_id": payload.get("target_id"),
@@ -1163,7 +1169,6 @@ class VendorAgentAdapter(AgentAdapter):
 ```json
 {
   "session_id": "sess_123",
-  "session_title": "Mas 训练任务会话",
   "url": "https://agent.example.com/callback",
   "headers": {
     "Authorization": "Bearer <token>"
@@ -1174,8 +1179,8 @@ class VendorAgentAdapter(AgentAdapter):
 ```bash
 pangu-agent monitor add \
   --run-id training_xxx \
+  --session-json '{"session_id":"sess_123","url":"https://agent.example.com/callback"}' \
   --adapter webhook \
-  --session-json '{"session_id":"sess_123","session_title":"Mas 训练任务会话","url":"https://agent.example.com/callback"}' \
   --detach \
   --json
 ```
@@ -1207,6 +1212,7 @@ delivery_status: pending / retrying / delivered / failed
 - `src/pangu/agent_monitor/status.py`: 从 run state 生成 status command，判断终态。
 - `src/pangu/agent_monitor/runner.py`: 外部循环、终态落盘、投递重试。
 - `src/pangu/agent_monitor/adapters/base.py`: adapter 接口。
+- `src/pangu/agent_monitor/adapters/codeagent.py`: 默认 `codeagent` 适配器模板。
 - `src/pangu/agent_monitor/adapters/example_sdk.py`: 三方 SDK 示例 adapter。
 - `src/pangu/agent_monitor/adapters/webhook.py`: 通用 webhook adapter。
 - `pangu-agent monitor add/run/list/status/cancel/retry-delivery/message`。

@@ -192,7 +192,6 @@ def retry_delivery(
     *,
     adapter: str | None = None,
     session: dict[str, Any] | None = None,
-    session_title: str | None = None,
     adapter_factory: AdapterFactory = create_adapter,
 ) -> MonitorTask:
     task = load_monitor(monitor_id)
@@ -202,9 +201,6 @@ def retry_delivery(
         task.adapter = adapter
     if session:
         task.session = session
-    if session_title is not None:
-        task.session_title = session_title
-        task.session["session_title"] = session_title
     task.delivery_status = DELIVERY_PENDING
     task.delivery_attempts = 0
     task.last_delivery_error = ""

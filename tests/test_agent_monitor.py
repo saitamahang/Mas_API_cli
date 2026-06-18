@@ -17,6 +17,7 @@ sys.modules.setdefault("yaml", yaml_stub)
 from pangu.agent import state as state_mod
 from pangu.agent_monitor import store as store_mod
 from pangu.agent_monitor.adapters.base import AdapterDeliveryError, AgentAdapter
+from pangu.agent_monitor.adapters import create_adapter
 from pangu.agent_monitor.models import DELIVERY_DELIVERED, DELIVERY_FAILED, MonitorTask
 from pangu.agent_monitor.runner import run_monitor
 from pangu.agent_monitor.status import classify_status, monitor_task_from_run
@@ -67,7 +68,7 @@ class AgentMonitorTests(unittest.TestCase):
         task = monitor_task_from_run(
             run_id="training_20260617_120000",
             adapter="fake",
-            session={"session_id": "sess-1", "session_title": "训练会话"},
+            session={"session_id": "sess-1"},
         )
 
         self.assertEqual(task.kind, "training")
@@ -86,6 +87,11 @@ class AgentMonitorTests(unittest.TestCase):
                 "--json",
             ],
         )
+
+    def test_codeagent_adapter_name_is_registered(self):
+        adapter = create_adapter("codeagent")
+
+        self.assertEqual(adapter.name, "codeagent")
 
     def test_monitor_task_from_deployment_run_uses_submit_result(self):
         state_mod.save_state(

@@ -42,22 +42,20 @@ When `next_action` starts a new run, such as `train.plan` after dataset publish 
 
 Long training and deployment waits should not be polled inside the main agent session. After `train submit` or `deploy submit`, if the user's goal is beyond the submitted milestone, create a detached monitor and then stop the main session.
 
-Use the configured monitor adapter/session:
+Use the configured monitor adapter and source session:
 
-- `PANGU_MONITOR_ADAPTER`
+- `pangu config set monitor_adapter codeagent` (default)
+- `PANGU_MONITOR_ADAPTER` for temporary override
 - `PANGU_MONITOR_SESSION_ID`
-- `PANGU_MONITOR_SESSION_TITLE` (optional)
 
-If these values are not available, ask the user to configure them or explicitly provide `--adapter` and `--session-id`. Do not invent a session id.
+Do not guess the adapter. The default adapter name comes from pangu config and defaults to `codeagent`. If the session id is not available, ask the user to configure it or pass `--session-id`. Do not invent a session id.
 
 Detached monitor creation:
 
 ```bash
 pangu-agent monitor add \
   --run-id <run_id> \
-  --adapter <adapter> \
   --session-id <session_id> \
-  --session-title <session_title> \
   --detach \
   --json
 ```
@@ -220,7 +218,7 @@ Submit reuses the hyperparameter overrides recorded by validate. Do not pass new
 After submit, stop if the response has `terminal: true`. If the workflow goal is beyond `training_submitted`, do not poll in the main session. Use the returned `monitor_add_template` and create a detached monitor:
 
 ```bash
-pangu-agent monitor add --run-id <run_id> --adapter <adapter> --session-id <session_id> --session-title <session_title> --detach --json
+pangu-agent monitor add --run-id <run_id> --session-id <session_id> --detach --json
 ```
 
 After the monitor is created successfully, stop the main session. When the background monitor reports completion back into this session, continue from the returned `next_action`.
@@ -301,7 +299,7 @@ Only run this after the user approves the exact `approval_summary` returned by v
 
 ```bash
 pangu-agent deploy submit --run-id <run_id>
-pangu-agent monitor add --run-id <run_id> --adapter <adapter> --session-id <session_id> --session-title <session_title> --detach --json
+pangu-agent monitor add --run-id <run_id> --session-id <session_id> --detach --json
 ```
 
 After submit, stop if the response has `terminal: true`. If the workflow goal is `service_running`, create a detached monitor instead of polling in the main session. When the monitor reports `running` or a failure state back into this session, continue according to the returned message and existing workflow rules.

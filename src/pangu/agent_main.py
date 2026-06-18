@@ -200,23 +200,23 @@ def _deploy_plan_command(asset_id: str, goal: str | None = None) -> str:
 
 
 def _monitor_add_template(run_id: str) -> str:
-    return (
-        f"pangu-agent monitor add --run-id {run_id} --adapter <adapter> "
-        "--session-id <session_id> --session-title <session_title> --detach"
-    )
+    return f"pangu-agent monitor add --run-id {run_id} --session-id <session_id> --detach"
 
 
 def _monitor_adapter(adapter: str | None) -> str:
-    value = adapter or os.environ.get("PANGU_MONITOR_ADAPTER", "")
+    value = adapter or os.environ.get("PANGU_MONITOR_ADAPTER", "") or PanguConfig.load().monitor_adapter
     if not value:
-        raise AgentError("missing_monitor_adapter", "缺少 monitor adapter", "pass_adapter_or_set_env")
+        raise AgentError(
+            "missing_monitor_adapter",
+            "缺少 monitor adapter，请设置 PANGU_MONITOR_ADAPTER 或 pangu config set monitor_adapter <adapter>",
+            "configure_monitor_adapter",
+        )
     return value
 
 
 def _monitor_session(
     *,
     session_id: str | None = None,
-    session_title: str | None = None,
     session_json: str | None = None,
     session_file: Path | None = None,
 ) -> dict[str, Any]:
@@ -236,11 +236,8 @@ def _monitor_session(
         session.update(parsed)
 
     env_session_id = os.environ.get("PANGU_MONITOR_SESSION_ID")
-    env_session_title = os.environ.get("PANGU_MONITOR_SESSION_TITLE")
     if session_id or env_session_id:
         session["session_id"] = session_id or env_session_id
-    if session_title or env_session_title:
-        session["session_title"] = session_title or env_session_title
     if not session.get("session_id"):
         raise AgentError("missing_monitor_session", "缺少 monitor session_id", "pass_session_id_or_set_env")
     return session
@@ -1934,9 +1931,8 @@ def deploy_status(
 @monitor_app.command("add")
 def monitor_add(
     run_id: str = typer.Option(..., "--run-id"),
-    adapter: Optional[str] = typer.Option(None, "--adapter", help="Agent adapter name; defaults to PANGU_MONITOR_ADAPTER"),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Agent adapter name; overrides configured default"),
     session_id: Optional[str] = typer.Option(None, "--session-id", help="Source agent session id"),
-    session_title: Optional[str] = typer.Option(None, "--session-title", help="Human-readable session title"),
     session_json: Optional[str] = typer.Option(None, "--session-json", help="Opaque adapter session JSON object"),
     session_file: Optional[Path] = typer.Option(None, "--session-file", help="File containing adapter session JSON object"),
     detach: bool = typer.Option(False, "--detach", help="Start a detached monitor runner"),
@@ -1953,7 +1949,6 @@ def monitor_add(
         adapter_name = _monitor_adapter(adapter)
         session = _monitor_session(
             session_id=session_id,
-            session_title=session_title,
             session_json=session_json,
             session_file=session_file,
         )
@@ -1961,7 +1956,6 @@ def monitor_add(
             run_id=run_id,
             adapter=adapter_name,
             session=session,
-            session_title=str(session.get("session_title") or ""),
             interval_seconds=interval,
             timeout_seconds=timeout,
             max_delivery_attempts=max_delivery_attempts,
@@ -2040,7 +2034,6 @@ def monitor_retry_delivery(
     monitor_id: str = typer.Option(..., "--monitor-id"),
     adapter: Optional[str] = typer.Option(None, "--adapter"),
     session_id: Optional[str] = typer.Option(None, "--session-id"),
-    session_title: Optional[str] = typer.Option(None, "--session-title"),
     session_json: Optional[str] = typer.Option(None, "--session-json"),
     session_file: Optional[Path] = typer.Option(None, "--session-file"),
     json_output: bool = typer.Option(False, "--json", help="Accepted for agent compatibility"),
@@ -2049,10 +2042,9 @@ def monitor_retry_delivery(
 
     def run():
         session = None
-        if session_id or session_title or session_json or session_file:
+        if session_id or session_json or session_file:
             session = _monitor_session(
                 session_id=session_id,
-                session_title=session_title,
                 session_json=session_json,
                 session_file=session_file,
             )
@@ -2060,7 +2052,6 @@ def monitor_retry_delivery(
             monitor_id,
             adapter=adapter or os.environ.get("PANGU_MONITOR_ADAPTER") or None,
             session=session,
-            session_title=session_title,
         )
         return {"monitor_id": task.monitor_id, "monitor": task.to_dict(), "next_action": "continue"}
 

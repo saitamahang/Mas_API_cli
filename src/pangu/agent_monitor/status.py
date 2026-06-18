@@ -29,7 +29,6 @@ def monitor_task_from_run(
     run_id: str,
     adapter: str,
     session: dict[str, Any],
-    session_title: str = "",
     interval_seconds: int = 60,
     timeout_seconds: int = 86400,
     max_delivery_attempts: int = 8,
@@ -63,7 +62,6 @@ def monitor_task_from_run(
         status_command=status_command,
         adapter=adapter,
         session=session,
-        session_title=session_title or str(session.get("session_title") or ""),
         interval_seconds=interval_seconds,
         timeout_seconds=timeout_seconds,
         max_delivery_attempts=max_delivery_attempts,
@@ -101,4 +99,3 @@ def build_delivery_payload(task: MonitorTask, status_payload: dict[str, Any]) ->
         "next_action": status_payload.get("next_action"),
         "status_payload": status_payload,
     }
-

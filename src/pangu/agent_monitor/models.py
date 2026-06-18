@@ -45,7 +45,6 @@ class MonitorTask:
     session: dict[str, Any]
     success_message: str
     failure_message: str
-    session_title: str = ""
     interval_seconds: int = 60
     timeout_seconds: int = 86400
     max_delivery_attempts: int = 8

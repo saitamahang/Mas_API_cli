@@ -4,6 +4,7 @@ from pangu.agent_monitor.adapters.base import AgentAdapter, AdapterDeliveryError
 
 
 ADAPTERS = {
+    "codeagent": "pangu.agent_monitor.adapters.codeagent.CodeAgentAdapter",
     "example_agent": "pangu.agent_monitor.adapters.example_sdk.ExampleAgentAdapter",
     "webhook": "pangu.agent_monitor.adapters.webhook.WebhookAdapter",
 }

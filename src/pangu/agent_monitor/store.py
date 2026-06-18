@@ -63,7 +63,6 @@ def write_dead_letter(task: MonitorTask, message: str, payload: dict[str, Any], 
         "monitor_id": task.monitor_id,
         "adapter": task.adapter,
         "session": task.session,
-        "session_title": task.session_title,
         "message": message,
         "payload": payload,
         "delivery_attempts": task.delivery_attempts,
@@ -74,4 +73,3 @@ def write_dead_letter(task: MonitorTask, message: str, payload: dict[str, Any], 
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     path.chmod(0o600)
     return str(path)
-

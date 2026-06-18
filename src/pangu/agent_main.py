@@ -48,6 +48,7 @@ from pangu.agent.goals import (
     transient_goal_state,
     with_goal_next_action,
 )
+from pangu.agent.monitor_contract import apply_submit_monitor_contract, monitor_submit_fields
 from pangu.agent.published_assets import flatten_asset_ext, published_asset_query, select_published_asset
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
@@ -197,10 +198,6 @@ def _deploy_plan_command(asset_id: str, goal: str | None = None) -> str:
         return ""
     goal_part = f" --goal {goal}" if goal else ""
     return f"pangu-agent deploy plan --asset-id {asset_id}{goal_part} --page-size 20 --json"
-
-
-def _monitor_add_template(run_id: str) -> str:
-    return f"pangu-agent monitor add --run-id {run_id} --session-id <session_id> --detach"
 
 
 def _monitor_adapter(adapter: str | None) -> str:
@@ -1411,20 +1408,20 @@ def train_submit(
         state["submit_result"] = data
         save_state(state)
         task_id = data.get("task_id") or data.get("id") or data.get("taskId") if isinstance(data, dict) else ""
-        return with_goal_next_action(
-            state,
-            {
-                "run_id": run_id,
-                "task": data,
-                "task_id": task_id,
-                "status_command": (
-                    f"pangu-agent train status --run-id {run_id} --task-id {task_id} --json"
-                    if task_id else ""
-                ),
-                "monitor_add_template": _monitor_add_template(run_id) if task_id else "",
-            },
-            milestone=TRAINING_SUBMITTED,
-            continue_action="train.status",
+        status_command = f"pangu-agent train status --run-id {run_id} --task-id {task_id} --json" if task_id else ""
+        return apply_submit_monitor_contract(
+            with_goal_next_action(
+                state,
+                {
+                    "run_id": run_id,
+                    "task": data,
+                    "task_id": task_id,
+                    "status_command": status_command,
+                    **monitor_submit_fields(run_id, task_id),
+                },
+                milestone=TRAINING_SUBMITTED,
+                continue_action="train.status",
+            )
         )
 
     _emit(run)
@@ -1871,20 +1868,22 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
         state["submit_result"] = data
         save_state(state)
         service_id = data.get("service_id") or data.get("id") if isinstance(data, dict) else ""
-        return with_goal_next_action(
-            state,
-            {
-                "run_id": run_id,
-                "service": data,
-                "service_id": service_id,
-                "status_command": (
-                    f"pangu-agent deploy status --run-id {run_id} --service-id {service_id} --json"
-                    if service_id else ""
-                ),
-                "monitor_add_template": _monitor_add_template(run_id) if service_id else "",
-            },
-            milestone=DEPLOYMENT_SUBMITTED,
-            continue_action="deploy.status",
+        status_command = (
+            f"pangu-agent deploy status --run-id {run_id} --service-id {service_id} --json" if service_id else ""
+        )
+        return apply_submit_monitor_contract(
+            with_goal_next_action(
+                state,
+                {
+                    "run_id": run_id,
+                    "service": data,
+                    "service_id": service_id,
+                    "status_command": status_command,
+                    **monitor_submit_fields(run_id, service_id),
+                },
+                milestone=DEPLOYMENT_SUBMITTED,
+                continue_action="deploy.status",
+            )
         )
 
     _emit(run)

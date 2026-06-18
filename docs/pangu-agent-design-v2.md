@@ -968,9 +968,10 @@ Monitor 不做 workflow 编排，不自动发布模型、不自动部署、不�
 train/deploy submit
   -> 保存 submit_result 到 run state
   -> 返回 task_id/service_id、status_command、monitor_add_template
+  -> 如果 goal 尚未到 submitted milestone，返回 next_action=monitor.add、monitor_required=true
 
 skill
-  -> 如果目标超过 submitted milestone
+  -> 如果 next_action=monitor.add 或 monitor_required=true
   -> 提供 session_id
   -> 执行 pangu-agent monitor add --run-id <run_id> ... --detach
   -> 主会话停止等待
@@ -983,11 +984,11 @@ monitor runner
 
 具体复用点:
 
-- `train submit`: 已保存 `submit_result`，新增返回 `task_id` 和 `monitor_add_template`。
-- `deploy submit`: 已保存 `submit_result`，新增返回 `service_id` 和 `monitor_add_template`。
+- `train submit`: 已保存 `submit_result`，新增返回 `task_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`。
+- `deploy submit`: 已保存 `submit_result`，新增返回 `service_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`。
 - `monitor add`: 只接收 `run_id`，从 run state 读取真实 `task_id` / `service_id`，不让 agent 手填任务 ID。
 - `monitor run`: 复用 status command，而不是重写 Pangu API 查询逻辑。
-- skill: submit 后负责显式调用 `monitor add --detach`，只提供 `session_id`；adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
+- skill: submit 后优先服从 `next_action`；当 `next_action=monitor.add` 时显式调用 `monitor add --detach`，只提供 `session_id`；adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
 
 ### 13.3 流程图
 
@@ -1002,7 +1003,7 @@ sequenceDiagram
 
     Agent->>CLI: train/deploy submit
     CLI->>State: save submit_result
-    CLI-->>Agent: status_command + monitor_add_template
+    CLI-->>Agent: next_action=monitor.add + monitor_add_template
 
     Agent->>CLI: monitor add --run-id --session-id --detach
     CLI->>State: load submit_result
@@ -1219,9 +1220,9 @@ delivery_status: pending / retrying / delivered / failed
 
 修改:
 
-- `train submit`: 返回 `task_id` 和 `monitor_add_template`。
-- `deploy submit`: 返回 `service_id` 和 `monitor_add_template`。
-- `SKILL.md`: submit 后目标超过 submitted 时创建 detached monitor，不在主会话轮询。
+- `train submit`: 返回 `task_id` 和 `monitor_add_template`；长目标下返回 `next_action=monitor.add`。
+- `deploy submit`: 返回 `service_id` 和 `monitor_add_template`；长目标下返回 `next_action=monitor.add`。
+- `SKILL.md`: submit 后按 `next_action=monitor.add` 创建 detached monitor，不在主会话轮询。
 - 设计文档: 增加异步 Monitor 方案、状态投递模型和 adapter 接入方法。
 
 不修改:

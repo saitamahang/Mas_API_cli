@@ -40,7 +40,7 @@ When `next_action` starts a new run, such as `train.plan` after dataset publish 
 
 ## Async Monitor Rules
 
-Long training and deployment waits should not be polled inside the main agent session. After `train submit` or `deploy submit`, if the response has `next_action: monitor.add` or `monitor_required: true`, create a detached monitor and then stop the main session.
+Long training and deployment waits should not be polled inside the main agent session. After `train submit`, `deploy submit`, `train status`, or `deploy status`, if the response has `next_action: monitor.add` or `monitor_required: true`, create a detached monitor and then stop the main session.
 
 Use the configured monitor adapter and source session:
 
@@ -60,7 +60,7 @@ pangu-agent monitor add \
   --json
 ```
 
-The monitor reuses `pangu-agent train status` / `pangu-agent deploy status` in a background process and sends a user-like message back to the source session when the task reaches a terminal state. If submit returns both `status_command` and `monitor_add_template`, follow `next_action`; do not poll `status_command` in the main session when `next_action` is `monitor.add`. It must not auto-approve, auto-publish, or auto-deploy.
+The monitor reuses `pangu-agent train status` / `pangu-agent deploy status` in a background process and sends a user-like message back to the source session when the task reaches a terminal state. If submit/status returns both a status command and `monitor_add_template`, follow `next_action`; do not poll status commands in the main session when `next_action` is `monitor.add`. It must not auto-approve, auto-publish, or auto-deploy.
 
 ## Dataset Workflow
 

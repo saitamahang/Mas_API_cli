@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pangu.agent.goals import GOAL_ORDER
+
 
 MONITOR_ADD_ACTION = "monitor.add"
 
@@ -56,4 +58,29 @@ def apply_submit_monitor_contract(result: dict[str, Any]) -> dict[str, Any]:
     result["monitor"] = monitor
     if required:
         result["next_action"] = MONITOR_ADD_ACTION
+    return result
+
+
+def apply_status_monitor_contract(
+    result: dict[str, Any],
+    *,
+    run_id: str | None,
+    target_id: str,
+    submitted_milestone: str,
+) -> dict[str, Any]:
+    if result.get("terminal") or not run_id or not target_id:
+        result.setdefault("monitor_required", False)
+        return result
+
+    goal = str(result.get("goal") or "")
+    if GOAL_ORDER.get(goal, -1) <= GOAL_ORDER[submitted_milestone]:
+        result.setdefault("monitor_required", False)
+        return result
+
+    result.update(monitor_submit_fields(run_id, target_id))
+    result["monitor_required"] = True
+    result["next_action"] = MONITOR_ADD_ACTION
+    monitor = dict(result.get("monitor") or {})
+    monitor["required"] = True
+    result["monitor"] = monitor
     return result

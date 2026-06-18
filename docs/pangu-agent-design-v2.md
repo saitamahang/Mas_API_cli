@@ -986,9 +986,10 @@ monitor runner
 
 - `train submit`: 已保存 `submit_result`，新增返回 `task_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`。
 - `deploy submit`: 已保存 `submit_result`，新增返回 `service_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`。
+- `train status` / `deploy status`: 如果主会话误入 status 轮询且目标超过 submitted milestone，非终态响应强制回到 `next_action=monitor.add`，避免主会话继续定时循环。
 - `monitor add`: 只接收 `run_id`，从 run state 读取真实 `task_id` / `service_id`，不让 agent 手填任务 ID。
 - `monitor run`: 复用 status command，而不是重写 Pangu API 查询逻辑。
-- skill: submit 后优先服从 `next_action`；当 `next_action=monitor.add` 时显式调用 `monitor add --detach`，只提供 `session_id`；adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
+- skill: submit/status 后优先服从 `next_action`；当 `next_action=monitor.add` 时显式调用 `monitor add --detach`，只提供 `session_id`；adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
 
 ### 13.3 流程图
 

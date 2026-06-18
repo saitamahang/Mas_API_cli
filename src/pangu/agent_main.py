@@ -48,7 +48,7 @@ from pangu.agent.goals import (
     transient_goal_state,
     with_goal_next_action,
 )
-from pangu.agent.monitor_contract import apply_submit_monitor_contract, monitor_submit_fields
+from pangu.agent.monitor_contract import apply_status_monitor_contract, apply_submit_monitor_contract, monitor_submit_fields
 from pangu.agent.published_assets import flatten_asset_ext, published_asset_query, select_published_asset
 from pangu.agent.scenarios import get_scenario, list_scenarios
 from pangu.agent.state import (
@@ -1445,19 +1445,24 @@ def train_status(
         if status == "completed":
             return with_goal_next_action(
                 state,
-                {"task": data, "task_status": status},
+                {"run_id": run_id, "task": data, "task_id": task_id, "task_status": status},
                 milestone=TRAINING_COMPLETED,
                 continue_action="train.publish_if_user_wants",
             )
         next_action = "inspect_training_failure" if status in {"failed", "stopped"} else "poll_training_status"
         result = with_goal_next_action(
             state,
-            {"task": data, "task_status": status},
+            {"run_id": run_id, "task": data, "task_id": task_id, "task_status": status},
             continue_action=next_action,
         )
         if status in {"failed", "stopped"}:
             result["terminal"] = True
-        return result
+        return apply_status_monitor_contract(
+            result,
+            run_id=run_id,
+            target_id=task_id,
+            submitted_milestone=TRAINING_SUBMITTED,
+        )
 
     _emit(run)
 
@@ -1910,19 +1915,24 @@ def deploy_status(
         if status == "running":
             return with_goal_next_action(
                 state,
-                {"service": data, "service_status": status},
+                {"run_id": run_id, "service": data, "service_id": service_id, "service_status": status},
                 milestone=SERVICE_RUNNING,
                 continue_action="stop",
             )
         next_action = "inspect_deployment_failure" if status in {"failed", "stopped"} else "poll_deploy_status"
         result = with_goal_next_action(
             state,
-            {"service": data, "service_status": status},
+            {"run_id": run_id, "service": data, "service_id": service_id, "service_status": status},
             continue_action=next_action,
         )
         if status in {"failed", "stopped"}:
             result["terminal"] = True
-        return result
+        return apply_status_monitor_contract(
+            result,
+            run_id=run_id,
+            target_id=service_id,
+            submitted_milestone=DEPLOYMENT_SUBMITTED,
+        )
 
     _emit(run)
 

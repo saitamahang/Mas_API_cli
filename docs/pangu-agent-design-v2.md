@@ -969,11 +969,12 @@ train/deploy submit
   -> 保存 submit_result 到 run state
   -> 返回 task_id/service_id、status_command、monitor_add_template
   -> 如果 goal 尚未到 submitted milestone，返回 next_action=monitor.add、monitor_required=true
+  -> 如果提供 --session-id 或 PANGU_MONITOR_SESSION_ID，则直接创建 detached monitor，返回 monitor_created=true
 
 skill
-  -> 如果 next_action=monitor.add 或 monitor_required=true
-  -> 提供 session_id
-  -> 执行 pangu-agent monitor add --run-id <run_id> ... --detach
+  -> 长目标优先执行 pangu-agent train/deploy submit --session-id <session_id>
+  -> 如果 monitor_created=true，主会话停止等待
+  -> 如果 monitor_created=false 且 next_action=monitor.add，再执行 pangu-agent monitor add --run-id <run_id> ... --detach
   -> 主会话停止等待
 
 monitor runner
@@ -984,12 +985,12 @@ monitor runner
 
 具体复用点:
 
-- `train submit`: 已保存 `submit_result`，新增返回 `task_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`。
-- `deploy submit`: 已保存 `submit_result`，新增返回 `service_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`。
+- `train submit`: 已保存 `submit_result`，新增返回 `task_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`；如果可解析 session id，则直接创建 detached monitor。
+- `deploy submit`: 已保存 `submit_result`，新增返回 `service_id`、`monitor_add_template`，长目标下强制 `next_action=monitor.add`；如果可解析 session id，则直接创建 detached monitor。
 - `train status` / `deploy status`: 如果主会话误入 status 轮询且目标超过 submitted milestone，非终态响应强制回到 `next_action=monitor.add`，避免主会话继续定时循环。
 - `monitor add`: 只接收 `run_id`，从 run state 读取真实 `task_id` / `service_id`，不让 agent 手填任务 ID。
 - `monitor run`: 复用 status command，而不是重写 Pangu API 查询逻辑。
-- skill: submit/status 后优先服从 `next_action`；当 `next_action=monitor.add` 时显式调用 `monitor add --detach`，只提供 `session_id`；adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
+- skill: 长目标 submit 优先传 `--session-id` 走原子 monitor 创建；submit/status 后继续服从 `next_action`，仅当 `monitor_created=false` 且 `next_action=monitor.add` 时显式调用 `monitor add --detach`。adapter 来自 `--adapter`、`PANGU_MONITOR_ADAPTER` 或 `pangu config monitor_adapter`，默认值为 `codeagent`。
 
 ### 13.3 流程图
 
@@ -1004,8 +1005,11 @@ sequenceDiagram
 
     Agent->>CLI: train/deploy submit
     CLI->>State: save submit_result
-    CLI-->>Agent: next_action=monitor.add + monitor_add_template
+    CLI->>State: save monitor task if session_id is available
+    CLI->>Monitor: start detached runner if monitor task was created
+    CLI-->>Agent: monitor_created=true + stop_waiting_in_main_session
 
+    opt monitor fallback
     Agent->>CLI: monitor add --run-id --session-id --detach
     CLI->>State: load submit_result
     CLI->>State: save monitor task
@@ -1221,9 +1225,9 @@ delivery_status: pending / retrying / delivered / failed
 
 修改:
 
-- `train submit`: 返回 `task_id` 和 `monitor_add_template`；长目标下返回 `next_action=monitor.add`。
-- `deploy submit`: 返回 `service_id` 和 `monitor_add_template`；长目标下返回 `next_action=monitor.add`。
-- `SKILL.md`: submit 后按 `next_action=monitor.add` 创建 detached monitor，不在主会话轮询。
+- `train submit`: 返回 `task_id` 和 `monitor_add_template`；长目标下返回 `next_action=monitor.add`；传入 session id 时原子创建 detached monitor。
+- `deploy submit`: 返回 `service_id` 和 `monitor_add_template`；长目标下返回 `next_action=monitor.add`；传入 session id 时原子创建 detached monitor。
+- `SKILL.md`: 长目标 submit 优先传 `--session-id`，submit 已创建 monitor 时直接停止主会话；只有未创建时才按 `next_action=monitor.add` fallback。
 - 设计文档: 增加异步 Monitor 方案、状态投递模型和 adapter 接入方法。
 
 不修改:

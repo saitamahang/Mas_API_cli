@@ -8,6 +8,12 @@ from pangu.agent.goals import GOAL_ORDER
 
 
 MONITOR_ADD_ACTION = "monitor.add"
+FORBIDDEN_MAIN_SESSION_POLL_COMMANDS = [
+    "pangu-agent train status",
+    "pangu-agent deploy status",
+    "pangu training get",
+    "pangu service get",
+]
 
 
 def monitor_add_template(run_id: str) -> str:
@@ -31,6 +37,7 @@ def monitor_submit_fields(run_id: str, target_id: str) -> dict[str, Any]:
             "adapter_source": "pangu config monitor_adapter",
             "detach": True,
         },
+        "main_session_polling_allowed": True,
     }
 
 
@@ -42,6 +49,9 @@ def apply_submit_monitor_contract(result: dict[str, Any]) -> dict[str, Any]:
 
     required = not bool(result.get("terminal"))
     result["monitor_required"] = required
+    result["main_session_polling_allowed"] = not required
+    if required:
+        result["forbidden_main_session_poll_commands"] = FORBIDDEN_MAIN_SESSION_POLL_COMMANDS
     monitor = dict(result.get("monitor") or {})
     monitor.update(
         {
@@ -79,6 +89,8 @@ def apply_status_monitor_contract(
 
     result.update(monitor_submit_fields(run_id, target_id))
     result["monitor_required"] = True
+    result["main_session_polling_allowed"] = False
+    result["forbidden_main_session_poll_commands"] = FORBIDDEN_MAIN_SESSION_POLL_COMMANDS
     result["next_action"] = MONITOR_ADD_ACTION
     monitor = dict(result.get("monitor") or {})
     monitor["required"] = True

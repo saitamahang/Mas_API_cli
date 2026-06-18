@@ -37,6 +37,8 @@ class AgentMonitorContractTests(unittest.TestCase):
         self.assertTrue(updated["monitor_required"])
         self.assertTrue(updated["monitor"]["required"])
         self.assertIn("--detach --json", updated["monitor_add_template"])
+        self.assertFalse(updated["main_session_polling_allowed"])
+        self.assertIn("pangu service get", updated["forbidden_main_session_poll_commands"])
 
     def test_status_monitor_contract_forces_monitor_add_for_long_goal(self):
         result = {
@@ -56,6 +58,8 @@ class AgentMonitorContractTests(unittest.TestCase):
         self.assertEqual(updated["next_action"], MONITOR_ADD_ACTION)
         self.assertTrue(updated["monitor_required"])
         self.assertTrue(updated["monitor"]["required"])
+        self.assertFalse(updated["main_session_polling_allowed"])
+        self.assertIn("pangu service get", updated["forbidden_main_session_poll_commands"])
 
     def test_status_monitor_contract_keeps_poll_for_submitted_goal(self):
         result = {

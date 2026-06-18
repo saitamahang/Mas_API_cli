@@ -40,7 +40,7 @@ When `next_action` starts a new run, such as `train.plan` after dataset publish 
 
 ## Async Monitor Rules
 
-Long training and deployment waits should not be polled inside the main agent session. After `train submit`, `deploy submit`, `train status`, or `deploy status`, if the response has `next_action: monitor.add` or `monitor_required: true`, create a detached monitor and then stop the main session.
+Long training and deployment waits should not be polled inside the main agent session. For goals beyond submitted, prefer atomic submit with `--session-id <session_id>` so `train submit` / `deploy submit` creates the detached monitor before returning. After `train submit`, `deploy submit`, `train status`, or `deploy status`, if the response has `next_action: monitor.add` or `monitor_required: true`, create a detached monitor and then stop the main session.
 
 Use the configured monitor adapter and source session:
 
@@ -60,7 +60,7 @@ pangu-agent monitor add \
   --json
 ```
 
-The monitor reuses `pangu-agent train status` / `pangu-agent deploy status` in a background process and sends a user-like message back to the source session when the task reaches a terminal state. If submit/status returns both a status command and `monitor_add_template`, follow `next_action`; do not poll status commands in the main session when `next_action` is `monitor.add`. It must not auto-approve, auto-publish, or auto-deploy.
+The monitor reuses `pangu-agent train status` / `pangu-agent deploy status` in a background process and sends a user-like message back to the source session when the task reaches a terminal state. If submit/status returns both a status command and `monitor_add_template`, follow `next_action`; do not poll status commands in the main session when `next_action` is `monitor.add`. Never run raw `pangu service get` or raw `pangu training get` loops. It must not auto-approve, auto-publish, or auto-deploy.
 
 ## Dataset Workflow
 
@@ -210,12 +210,12 @@ Only run this after the user approves the exact `approval_summary` returned by v
 ### Submit
 
 ```bash
-pangu-agent train submit --run-id <run_id>
+pangu-agent train submit --run-id <run_id> --session-id <session_id>
 ```
 
 Submit reuses the hyperparameter overrides recorded by validate. Do not pass new hyperparameters at submit time. If the user wants a different batch size or any other hyperparameter, rerun validate with the new values, then ask for approval again.
 
-After submit, stop if the response has `terminal: true`. If the response has `next_action: monitor.add` or `monitor_required: true`, do not poll in the main session. Use the returned `monitor_add_template` or `monitor.command_template` and create a detached monitor:
+After submit, stop if the response has `terminal: true`. If submit returns `monitor_created: true`, stop the main session immediately. If `monitor_created` is false and the response has `next_action: monitor.add` or `monitor_required: true`, do not poll in the main session. Use the returned `monitor_add_template` or `monitor.command_template` and create a detached monitor:
 
 ```bash
 pangu-agent monitor add --run-id <run_id> --session-id <session_id> --detach --json
@@ -298,11 +298,10 @@ Only run this after the user approves the exact `approval_summary` returned by v
 ### Submit and Async Monitor
 
 ```bash
-pangu-agent deploy submit --run-id <run_id>
-pangu-agent monitor add --run-id <run_id> --session-id <session_id> --detach --json
+pangu-agent deploy submit --run-id <run_id> --session-id <session_id>
 ```
 
-After submit, stop if the response has `terminal: true`. If the response has `next_action: monitor.add` or `monitor_required: true`, create a detached monitor instead of polling in the main session. When the monitor reports `running` or a failure state back into this session, continue according to the returned message and existing workflow rules.
+After submit, stop if the response has `terminal: true`. If submit returns `monitor_created: true`, stop the main session immediately. If `monitor_created` is false and the response has `next_action: monitor.add` or `monitor_required: true`, create a detached monitor instead of polling in the main session. When the monitor reports `running` or a failure state back into this session, continue according to the returned message and existing workflow rules.
 
 ## Supported Initial Scenarios
 

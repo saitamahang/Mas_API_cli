@@ -240,6 +240,51 @@ def _monitor_session(
     return session
 
 
+def _create_detached_monitor_from_run(
+    *,
+    run_id: str,
+    session_id: str | None = None,
+    interval: int = 60,
+    timeout: int = 86400,
+) -> dict[str, Any]:
+    task = monitor_task_from_run(
+        run_id=run_id,
+        adapter=_monitor_adapter(None),
+        session=_monitor_session(session_id=session_id),
+        interval_seconds=interval,
+        timeout_seconds=timeout,
+    )
+    save_monitor(task)
+    detach_info = start_detached_monitor(task.monitor_id)
+    return {
+        "monitor_id": task.monitor_id,
+        "monitor_task": task.to_dict(),
+        "detached": bool(detach_info),
+        "detach": detach_info,
+        "next_action": "stop_waiting_in_main_session",
+    }
+
+
+def _attach_submit_monitor(
+    result: dict[str, Any],
+    *,
+    run_id: str,
+    monitor: bool,
+    session_id: str | None,
+) -> dict[str, Any]:
+    session_available = bool(session_id or os.environ.get("PANGU_MONITOR_SESSION_ID"))
+    if not monitor and not (result.get("monitor_required") and session_available):
+        result["monitor_created"] = False
+        return result
+
+    monitor_info = _create_detached_monitor_from_run(run_id=run_id, session_id=session_id)
+    result.update(monitor_info)
+    result["monitor_created"] = True
+    result["main_session_polling_allowed"] = False
+    result["terminal"] = False
+    return result
+
+
 def _resolve_published_asset(
     client: PanguClient,
     workspace_id: str,
@@ -1333,10 +1378,14 @@ def train_approve(
 def train_submit(
     run_id: str = typer.Option(..., "--run-id"),
     batch_size: Optional[int] = typer.Option(None, "--batch-size"),
+    monitor: bool = typer.Option(False, "--monitor", help="Create a detached monitor after successful submit"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Source agent session id for monitor delivery"),
 ):
     """Submit a validated training YAML."""
 
     def run():
+        if monitor:
+            _monitor_session(session_id=session_id)
         state = load_state(run_id, expected_kind="training")
         artifact = _require_artifact_hash(state, "train_yaml")
         validate_training_context(state, load_yaml(artifact))
@@ -1409,7 +1458,7 @@ def train_submit(
         save_state(state)
         task_id = data.get("task_id") or data.get("id") or data.get("taskId") if isinstance(data, dict) else ""
         status_command = f"pangu-agent train status --run-id {run_id} --task-id {task_id} --json" if task_id else ""
-        return apply_submit_monitor_contract(
+        result = apply_submit_monitor_contract(
             with_goal_next_action(
                 state,
                 {
@@ -1422,6 +1471,12 @@ def train_submit(
                 milestone=TRAINING_SUBMITTED,
                 continue_action="train.status",
             )
+        )
+        return _attach_submit_monitor(
+            result,
+            run_id=run_id,
+            monitor=monitor,
+            session_id=session_id,
         )
 
     _emit(run)
@@ -1828,10 +1883,16 @@ def deploy_approve(
 
 
 @deploy_app.command("submit")
-def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
+def deploy_submit(
+    run_id: str = typer.Option(..., "--run-id"),
+    monitor: bool = typer.Option(False, "--monitor", help="Create a detached monitor after successful submit"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Source agent session id for monitor delivery"),
+):
     """Submit a validated deployment YAML."""
 
     def run():
+        if monitor:
+            _monitor_session(session_id=session_id)
         state = load_state(run_id, expected_kind="deployment")
         artifact = _require_artifact_hash(state, "deploy_yaml")
         if state.get("submit_result"):
@@ -1876,7 +1937,7 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
         status_command = (
             f"pangu-agent deploy status --run-id {run_id} --service-id {service_id} --json" if service_id else ""
         )
-        return apply_submit_monitor_contract(
+        result = apply_submit_monitor_contract(
             with_goal_next_action(
                 state,
                 {
@@ -1889,6 +1950,12 @@ def deploy_submit(run_id: str = typer.Option(..., "--run-id")):
                 milestone=DEPLOYMENT_SUBMITTED,
                 continue_action="deploy.status",
             )
+        )
+        return _attach_submit_monitor(
+            result,
+            run_id=run_id,
+            monitor=monitor,
+            session_id=session_id,
         )
 
     _emit(run)

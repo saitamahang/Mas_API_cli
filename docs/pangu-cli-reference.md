@@ -12,6 +12,18 @@ pip install -e .
 
 安装后即可使用 `pangu` 命令。
 
+发布版 wheel 可直接安装:
+
+```bash
+pip install ./dist/pangu_cli-0.2.0-py3-none-any.whl
+```
+
+如果需要同时初始化 `pangu-agent` skill、adapter 和交互配置，请使用根目录的安装脚本:
+
+```bash
+./scripts/install-pangu-agent.sh ./dist/pangu_cli-0.2.0-py3-none-any.whl
+```
+
 ---
 
 ## 初始化配置

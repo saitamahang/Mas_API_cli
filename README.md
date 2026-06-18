@@ -29,6 +29,18 @@ pip install -r requirements.txt
 
 `requirements.txt` 会安装当前项目，并读取 `pyproject.toml` 中声明的依赖。
 
+发布版 wheel 可以配合安装脚本:
+
+```bash
+# macOS/Linux
+./scripts/install-pangu-agent.sh ./dist/pangu_cli-0.2.0-py3-none-any.whl
+
+# Windows PowerShell
+.\scripts\install-pangu-agent.ps1 .\dist\pangu_cli-0.2.0-py3-none-any.whl
+```
+
+脚本会先安装 wheel，再安装可选插件/adapter SDK 包，随后执行 `pangu-agent init` 安装 skill、交互式初始化 `pangu config`、写入默认 monitor adapter 并运行 doctor 检查。
+
 安装后可以使用:
 
 ```bash

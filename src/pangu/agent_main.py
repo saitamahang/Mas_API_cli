@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 import json
-import shutil
 import time
 import traceback
+from importlib import resources
 from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Any, List, Optional
@@ -2144,23 +2144,62 @@ def monitor_message_cmd(
     _emit(lambda: {"monitor_id": monitor_id, "message": monitor_message(monitor_id), "next_action": "manual_send"})
 
 
-def _skill_source_path() -> Path:
-    """Locate the bundled skill file inside the repo/package."""
+def _skill_source() -> tuple[str, str]:
+    """Read the bundled skill from editable checkout or package resources."""
     # Editable install: agent_main.py is at src/pangu/agent_main.py
     repo_root = Path(__file__).resolve().parents[2]
     candidate = repo_root / ".claude" / "skills" / "pangu-agent" / "SKILL.md"
     if candidate.exists():
-        return candidate
-    # Fallback: inside the installed package
+        return candidate.read_text(encoding="utf-8"), str(candidate)
+
+    # Fallback: package data path in an installed wheel
     pkg_root = Path(__file__).resolve().parent
     candidate = pkg_root / "data" / "skills" / "pangu-agent" / "SKILL.md"
     if candidate.exists():
-        return candidate
+        return candidate.read_text(encoding="utf-8"), str(candidate)
+
+    # Fallback: importlib resources for non-standard importers
+    resource = resources.files("pangu").joinpath("data", "skills", "pangu-agent", "SKILL.md")
+    if resource.is_file():
+        return resource.read_text(encoding="utf-8"), str(resource)
+
     raise AgentError("skill_source_missing", "找不到内置的 SKILL.md 源文件", "check_installation")
+
+
+def _skill_source_path() -> str:
+    _, source = _skill_source()
+    return source
 
 
 def _skill_dest_path() -> Path:
     return Path.home() / ".claude" / "skills" / "pangu-agent" / "SKILL.md"
+
+
+def _install_skill(force: bool) -> dict[str, Any]:
+    source_text, source = _skill_source()
+    dest = _skill_dest_path()
+    exists_before = dest.exists()
+    if exists_before and not force:
+        raise AgentError(
+            "skill_already_installed",
+            f"skill 已安装到 {dest}，使用 --force 覆盖",
+            "pass_force_or_skip",
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(source_text, encoding="utf-8")
+    return {
+        "source": source,
+        "installed_to": str(dest),
+        "exists_before": exists_before,
+        "force": force,
+    }
+
+
+def _set_monitor_adapter(adapter: str) -> dict[str, Any]:
+    config = PanguConfig.load()
+    config.monitor_adapter = adapter
+    config.save()
+    return {"monitor_adapter": adapter}
 
 
 @skill_app.command("install")
@@ -2168,23 +2207,9 @@ def skill_install(force: bool = typer.Option(False, "--force")):
     """Install the pangu-agent skill to ~/.claude/skills/."""
 
     def run():
-        src = _skill_source_path()
-        dest = _skill_dest_path()
-        exists_before = dest.exists()
-        if exists_before and not force:
-            raise AgentError(
-                "skill_already_installed",
-                f"skill 已安装到 {dest}，使用 --force 覆盖",
-                "pass_force_or_skip",
-            )
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-        return {
-            "installed_to": str(dest),
-            "exists_before": exists_before,
-            "force": force,
-            "next_action": "use_pangu_agent_skill",
-        }
+        result = _install_skill(force)
+        result["next_action"] = "use_pangu_agent_skill"
+        return result
 
     _emit(run)
 
@@ -2213,7 +2238,7 @@ def skill_path():
         src = _skill_source_path()
         dest = _skill_dest_path()
         return {
-            "source": str(src),
+            "source": src,
             "destination": str(dest),
             "installed": dest.exists(),
             "next_action": "install_if_needed",
@@ -2228,19 +2253,57 @@ def skill_status():
 
     def run():
         dest = _skill_dest_path()
-        src = _skill_source_path()
+        src_text, src = _skill_source()
         installed = dest.exists()
         up_to_date = False
         if installed:
-            up_to_date = dest.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+            up_to_date = dest.read_text(encoding="utf-8") == src_text
         return {
             "installed": installed,
             "up_to_date": up_to_date,
+            "source": src,
             "destination": str(dest),
             "next_action": "install" if not installed else ("up_to_date" if up_to_date else "reinstall_with_force"),
         }
 
     _emit(run)
+
+
+@app.command("init")
+def agent_init(
+    install_skill: bool = typer.Option(True, "--install-skill/--no-install-skill", help="Install bundled Claude skill"),
+    force_skill: bool = typer.Option(True, "--force-skill/--no-force-skill", help="Overwrite existing skill"),
+    adapter: str = typer.Option("codeagent", "--adapter", help="Default monitor adapter to write into pangu config"),
+    configure: bool = typer.Option(True, "--configure/--skip-config", help="Run interactive pangu config init"),
+    doctor: bool = typer.Option(True, "--doctor/--skip-doctor", help="Run pangu-agent doctor after init"),
+):
+    """Initialize local pangu-agent integration after wheel installation."""
+
+    summary: dict[str, Any] = {
+        "skill": None,
+        "adapter": None,
+        "config_init_ran": False,
+        "doctor": None,
+        "next_action": "use_pangu_agent_skill",
+    }
+    try:
+        if install_skill:
+            summary["skill"] = _install_skill(force_skill)
+        if configure:
+            from pangu.commands.config_cmd import init as config_init
+
+            config_init(non_interactive=False)
+            summary["config_init_ran"] = True
+        summary["adapter"] = _set_monitor_adapter(adapter)
+        if doctor:
+            auth = AuthManager(PanguConfig.load()).status()
+            ready = bool(auth.get("valid") or auth.get("configured"))
+            summary["doctor"] = {"auth": auth, "ready": ready}
+            if not ready:
+                summary["next_action"] = "finish_config_or_auth"
+        print_json(success(**summary))
+    except AgentError as e:
+        print_json(failure(e))
 
 
 if __name__ == "__main__":

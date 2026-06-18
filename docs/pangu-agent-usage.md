@@ -34,6 +34,31 @@ pangu auth login
 pangu-agent doctor --json
 ```
 
+如果使用发布版 wheel，可以用安装脚本完成安装和初始化:
+
+```bash
+# macOS/Linux
+./scripts/install-pangu-agent.sh ./dist/pangu_cli-0.2.0-py3-none-any.whl
+
+# Windows PowerShell
+.\scripts\install-pangu-agent.ps1 .\dist\pangu_cli-0.2.0-py3-none-any.whl
+```
+
+脚本支持安装 adapter SDK 或 agent 插件包:
+
+```bash
+./scripts/install-pangu-agent.sh ./dist/pangu_cli-0.2.0-py3-none-any.whl \
+  --adapter codeagent \
+  --adapter-package codeagent-sdk \
+  --plugin-package some-agent-plugin
+```
+
+也可以在安装 wheel 后手动运行初始化:
+
+```bash
+pangu-agent init --install-skill --adapter codeagent
+```
+
 异步 monitor 默认 adapter:
 
 ```bash

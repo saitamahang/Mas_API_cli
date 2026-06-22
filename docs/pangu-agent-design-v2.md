@@ -51,7 +51,7 @@ v2.0 的目标是将 `pangu-agent` 明确定位为 agent 专用的协议层，�
 
 - 原始 CLI 层: `pangu model/dataset/pool/training/service`。
 - Agent 适配层: `pangu-agent`，位于 `src/pangu/agent_main.py` 和 `src/pangu/agent/*.py`。
-- Skill 指令层: `.claude/skills/pangu-agent/SKILL.md`，约束 agent 如何调用。
+- Skill 指令层: `src/pangu/data/skills/pangu-agent/SKILL.md`，作为 wheel 内置的唯一 skill 源，约束 agent 如何调用。
 
 ```mermaid
 flowchart TB
@@ -95,7 +95,7 @@ flowchart TB
 | `src/pangu/agent/published_assets.py` | 发布模型后从资产中心解析 `asset_id` | 已实现 |
 | `src/pangu/agent/scenarios.py` | 内置 CV 场景配置 | 已实现，需外部化 |
 | `src/pangu/agent/utils.py` | JSON 输出、错误包装、`run_quietly` | 已实现，需重构 |
-| `.claude/skills/pangu-agent/SKILL.md` | Agent 操作规约 | 已实现，存在与代码漂移风险 |
+| `src/pangu/data/skills/pangu-agent/SKILL.md` | Agent 操作规约与 wheel 内置 skill 源 | 已实现，作为唯一源维护 |
 
 ## 5. 关键设计原则
 

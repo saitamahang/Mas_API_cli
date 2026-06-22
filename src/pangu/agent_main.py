@@ -6,7 +6,6 @@ import os
 import json
 import time
 import traceback
-from importlib import resources
 from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Any, List, Optional
@@ -51,6 +50,15 @@ from pangu.agent.goals import (
 from pangu.agent.monitor_contract import apply_status_monitor_contract, apply_submit_monitor_contract, monitor_submit_fields
 from pangu.agent.published_assets import flatten_asset_ext, published_asset_query, select_published_asset
 from pangu.agent.scenarios import get_scenario, list_scenarios
+from pangu.agent.skills import (
+    BUNDLED_SKILL_NAMES,
+    DEFAULT_SKILL_NAME,
+    install_skill as _install_skill,
+    normalize_skill_name as _normalize_skill_name,
+    skill_dest_path as _skill_dest_path,
+    skill_source_path as _skill_source_path,
+    skill_status as _skill_status,
+)
 from pangu.agent.state import (
     RUNS_DIR,
     base_state,
@@ -2144,57 +2152,6 @@ def monitor_message_cmd(
     _emit(lambda: {"monitor_id": monitor_id, "message": monitor_message(monitor_id), "next_action": "manual_send"})
 
 
-def _skill_source() -> tuple[str, str]:
-    """Read the bundled skill from editable checkout or package resources."""
-    # Editable install: agent_main.py is at src/pangu/agent_main.py
-    repo_root = Path(__file__).resolve().parents[2]
-    candidate = repo_root / ".claude" / "skills" / "pangu-agent" / "SKILL.md"
-    if candidate.exists():
-        return candidate.read_text(encoding="utf-8"), str(candidate)
-
-    # Fallback: package data path in an installed wheel
-    pkg_root = Path(__file__).resolve().parent
-    candidate = pkg_root / "data" / "skills" / "pangu-agent" / "SKILL.md"
-    if candidate.exists():
-        return candidate.read_text(encoding="utf-8"), str(candidate)
-
-    # Fallback: importlib resources for non-standard importers
-    resource = resources.files("pangu").joinpath("data", "skills", "pangu-agent", "SKILL.md")
-    if resource.is_file():
-        return resource.read_text(encoding="utf-8"), str(resource)
-
-    raise AgentError("skill_source_missing", "找不到内置的 SKILL.md 源文件", "check_installation")
-
-
-def _skill_source_path() -> str:
-    _, source = _skill_source()
-    return source
-
-
-def _skill_dest_path() -> Path:
-    return Path.home() / ".claude" / "skills" / "pangu-agent" / "SKILL.md"
-
-
-def _install_skill(force: bool) -> dict[str, Any]:
-    source_text, source = _skill_source()
-    dest = _skill_dest_path()
-    exists_before = dest.exists()
-    if exists_before and not force:
-        raise AgentError(
-            "skill_already_installed",
-            f"skill 已安装到 {dest}，使用 --force 覆盖",
-            "pass_force_or_skip",
-        )
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(source_text, encoding="utf-8")
-    return {
-        "source": source,
-        "installed_to": str(dest),
-        "exists_before": exists_before,
-        "force": force,
-    }
-
-
 def _set_monitor_adapter(adapter: str) -> dict[str, Any]:
     config = PanguConfig.load()
     config.monitor_adapter = adapter
@@ -2203,41 +2160,48 @@ def _set_monitor_adapter(adapter: str) -> dict[str, Any]:
 
 
 @skill_app.command("install")
-def skill_install(force: bool = typer.Option(False, "--force")):
-    """Install the pangu-agent skill to ~/.claude/skills/."""
+def skill_install(
+    name: str = typer.Option(DEFAULT_SKILL_NAME, "--name", help="Bundled skill name"),
+    force: bool = typer.Option(False, "--force"),
+):
+    """Install a bundled skill to ~/.claude/skills/."""
 
     def run():
-        result = _install_skill(force)
-        result["next_action"] = "use_pangu_agent_skill"
+        result = _install_skill(force, name)
+        result["next_action"] = "use_pangu_agent_skill" if result["name"] == DEFAULT_SKILL_NAME else "use_installed_skill"
         return result
 
     _emit(run)
 
 
 @skill_app.command("uninstall")
-def skill_uninstall(yes: bool = typer.Option(False, "-y", "--yes")):
-    """Remove the pangu-agent skill from ~/.claude/skills/."""
+def skill_uninstall(
+    name: str = typer.Option(DEFAULT_SKILL_NAME, "--name", help="Bundled skill name"),
+    yes: bool = typer.Option(False, "-y", "--yes"),
+):
+    """Remove a bundled skill from ~/.claude/skills/."""
 
     def run():
-        dest = _skill_dest_path()
+        dest = _skill_dest_path(name)
         if not dest.exists():
-            raise AgentError("skill_not_installed", f"skill 未安装: {dest}", "skip_or_install")
+            raise AgentError("skill_not_installed", f"{name} skill 未安装: {dest}", "skip_or_install")
         if not yes and not typer.confirm(f"确认删除 {dest}?"):
             raise typer.Abort()
         dest.unlink()
-        return {"uninstalled_from": str(dest), "next_action": "continue"}
+        return {"name": _normalize_skill_name(name), "uninstalled_from": str(dest), "next_action": "continue"}
 
     _emit(run)
 
 
 @skill_app.command("path")
-def skill_path():
-    """Show skill source and destination paths."""
+def skill_path(name: str = typer.Option(DEFAULT_SKILL_NAME, "--name", help="Bundled skill name")):
+    """Show bundled skill source and destination paths."""
 
     def run():
-        src = _skill_source_path()
-        dest = _skill_dest_path()
+        src = _skill_source_path(name)
+        dest = _skill_dest_path(name)
         return {
+            "name": _normalize_skill_name(name),
             "source": src,
             "destination": str(dest),
             "installed": dest.exists(),
@@ -2248,23 +2212,39 @@ def skill_path():
 
 
 @skill_app.command("status")
-def skill_status():
-    """Check whether the pangu-agent skill is installed."""
+def skill_status(name: str = typer.Option(DEFAULT_SKILL_NAME, "--name", help="Bundled skill name")):
+    """Check whether a bundled skill is installed."""
 
     def run():
-        dest = _skill_dest_path()
-        src_text, src = _skill_source()
-        installed = dest.exists()
-        up_to_date = False
-        if installed:
-            up_to_date = dest.read_text(encoding="utf-8") == src_text
-        return {
-            "installed": installed,
-            "up_to_date": up_to_date,
-            "source": src,
-            "destination": str(dest),
-            "next_action": "install" if not installed else ("up_to_date" if up_to_date else "reinstall_with_force"),
-        }
+        return _skill_status(name)
+
+    _emit(run)
+
+
+@skill_app.command("list")
+def skill_list():
+    """List bundled skills available from this installation."""
+
+    def run():
+        skills = []
+        for name in BUNDLED_SKILL_NAMES:
+            dest = _skill_dest_path(name)
+            try:
+                source = _skill_source_path(name)
+                available = True
+            except AgentError:
+                source = None
+                available = False
+            skills.append(
+                {
+                    "name": name,
+                    "available": available,
+                    "source": source,
+                    "destination": str(dest),
+                    "installed": dest.exists(),
+                }
+            )
+        return {"skills": skills, "default": DEFAULT_SKILL_NAME, "next_action": "install_if_needed"}
 
     _emit(run)
 
@@ -2272,6 +2252,11 @@ def skill_status():
 @app.command("init")
 def agent_init(
     install_skill: bool = typer.Option(True, "--install-skill/--no-install-skill", help="Install bundled Claude skill"),
+    install_legacy_pangu_skill: bool = typer.Option(
+        False,
+        "--install-legacy-pangu-skill",
+        help="Also install the legacy raw pangu Claude skill",
+    ),
     force_skill: bool = typer.Option(True, "--force-skill/--no-force-skill", help="Overwrite existing skill"),
     adapter: str = typer.Option("codeagent", "--adapter", help="Default monitor adapter to write into pangu config"),
     configure: bool = typer.Option(True, "--configure/--skip-config", help="Run interactive pangu config init"),
@@ -2281,6 +2266,7 @@ def agent_init(
 
     summary: dict[str, Any] = {
         "skill": None,
+        "legacy_pangu_skill": None,
         "adapter": None,
         "config_init_ran": False,
         "doctor": None,
@@ -2289,6 +2275,8 @@ def agent_init(
     try:
         if install_skill:
             summary["skill"] = _install_skill(force_skill)
+        if install_legacy_pangu_skill:
+            summary["legacy_pangu_skill"] = _install_skill(force_skill, "pangu")
         if configure:
             from pangu.commands.config_cmd import init as config_init
 

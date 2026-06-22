@@ -59,6 +59,18 @@ pangu-agent doctor --json
 pangu-agent init --install-skill --adapter codeagent
 ```
 
+默认初始化只安装 `pangu-agent` skill。可查看 wheel 中内置的 skill:
+
+```bash
+pangu-agent skill list
+```
+
+旧的 raw CLI `pangu` skill 也随包分发，但默认不启用；需要时显式安装:
+
+```bash
+pangu-agent skill install --name pangu --force
+```
+
 异步 monitor 默认 adapter:
 
 ```bash

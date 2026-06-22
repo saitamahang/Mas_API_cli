@@ -12,7 +12,9 @@ param(
 
     [switch]$SkipDoctor,
 
-    [switch]$NoForceSkill
+    [switch]$NoForceSkill,
+
+    [switch]$InstallLegacyPanguSkill
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +30,10 @@ foreach ($Package in $AdapterPackage) {
 }
 
 $InitArgs = @("init", "--install-skill", "--adapter", $Adapter)
+
+if ($InstallLegacyPanguSkill) {
+    $InitArgs += "--install-legacy-pangu-skill"
+}
 
 if ($NoForceSkill) {
     $InitArgs += "--no-force-skill"

@@ -12,6 +12,7 @@
 - [pangu CLI 命令参考](docs/pangu-cli-reference.md)
 - [pangu-agent 使用指南](docs/pangu-agent-usage.md)
 - [pangu-agent 设计文档](docs/pangu-agent-design-v2.md)
+- [API 参考 PDF](docs/api-reference/README.md)
 
 ## 安装
 
@@ -40,6 +41,19 @@ pip install -r requirements.txt
 ```
 
 脚本会先安装 wheel，再安装可选插件/adapter SDK 包，随后执行 `pangu-agent init` 安装 skill、交互式初始化 `pangu config`、写入默认 monitor adapter 并运行 doctor 检查。
+
+默认只安装 agent-safe 的 `pangu-agent` skill。仓库内旧的 raw CLI `pangu` skill 也会随 wheel 分发，但需要显式安装:
+
+```bash
+pangu-agent skill install --name pangu --force
+```
+
+如果确实希望安装脚本同时安装旧 skill:
+
+```bash
+./scripts/install-pangu-agent.sh ./dist/pangu_cli-0.2.0-py3-none-any.whl \
+  --install-legacy-pangu-skill
+```
 
 安装后可以使用:
 

@@ -13,6 +13,7 @@ Options:
   --skip-config                 Skip interactive pangu config init.
   --skip-doctor                 Skip pangu-agent doctor check.
   --no-force-skill              Do not overwrite existing skill.
+  --install-legacy-pangu-skill  Also install the legacy raw pangu skill.
   -h, --help                    Show help.
 
 Example:
@@ -32,6 +33,7 @@ ADAPTER="codeagent"
 SKIP_CONFIG=0
 SKIP_DOCTOR=0
 FORCE_SKILL=1
+INSTALL_LEGACY_PANGU_SKILL=0
 ADAPTER_PACKAGES=()
 PLUGIN_PACKAGES=()
 
@@ -65,6 +67,10 @@ while [[ $# -gt 0 ]]; do
       FORCE_SKILL=0
       shift
       ;;
+    --install-legacy-pangu-skill)
+      INSTALL_LEGACY_PANGU_SKILL=1
+      shift
+      ;;
     *)
       if [[ -z "$WHEEL" ]]; then
         WHEEL="$1"
@@ -95,6 +101,9 @@ for package in "${ADAPTER_PACKAGES[@]}"; do
 done
 
 INIT_ARGS=(init --install-skill --adapter "$ADAPTER")
+if [[ "$INSTALL_LEGACY_PANGU_SKILL" -eq 1 ]]; then
+  INIT_ARGS+=(--install-legacy-pangu-skill)
+fi
 if [[ "$FORCE_SKILL" -eq 1 ]]; then
   INIT_ARGS+=(--force-skill)
 else

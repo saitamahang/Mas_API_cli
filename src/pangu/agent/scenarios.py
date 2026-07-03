@@ -120,6 +120,119 @@ SCENARIOS: dict[str, dict[str, Any]] = {
             "batch_size_param_names": ["batch_size", "batchSize"],
         },
     },
+    "cv_anomaly_detection": {
+        "label": "异常检测",
+        "capabilities": {
+            "dataset_import": True,
+            "dataset_publish": True,
+            "training": True,
+            "edge_deploy": True,
+        },
+        "model_query": {
+            "type": "CV",
+            "sub_type": "AD",
+            "source": "Preset",
+        },
+        "dataset": {
+            "modal": "IMAGE",
+            "import": {
+                "content_type": "IMAGE_ANOMALY_DETECTION",
+                "file_format": "IMAGE_TXT",
+                "file_source": "OBS",
+            },
+            "publish": {
+                "file_content_type": "IMAGE_ANOMALY_DETECTION",
+                "publish_format": "PANGU",
+                "require_train_proportion": True,
+                "default_train_proportion": 0.8,
+            },
+            "training_catalog": "PUBLISH",
+        },
+        "training": {
+            "model_type": "CV",
+            "train_type": "SFT",
+            "model_source_detail": "SYSTEM",
+            "create_model_source": "pangu",
+            "default_batch_size": 1,
+            "batch_size_param_names": ["batch_size", "batchSize"],
+        },
+    },
+    "cv_rotated_object_detection": {
+        "label": "旋转框目标检测",
+        "capabilities": {
+            "dataset_import": True,
+            "dataset_publish": True,
+            "training": True,
+            "edge_deploy": True,
+        },
+        "model_query": {
+            "type": "CV",
+            "sub_type": "RD",
+            "source": "Preset",
+        },
+        "dataset": {
+            "modal": "IMAGE",
+            "import": {
+                "content_type": "IMAGE_OBJECT_DETECTION",
+                "file_format": "PASCAL",
+                "file_source": "OBS",
+            },
+            "publish": {
+                "file_content_type": "IMAGE_OBJECT_DETECTION",
+                "publish_format": "PANGU",
+                "require_train_proportion": True,
+                "default_train_proportion": 0.8,
+            },
+            "training_catalog": "PUBLISH",
+        },
+        "training": {
+            "model_type": "CV",
+            "train_type": "SFT",
+            "model_source_detail": "SYSTEM",
+            "create_model_source": "pangu",
+            "default_batch_size": 1,
+            "batch_size_param_names": ["batch_size", "batchSize"],
+        },
+    },
+    "cv_object_tracking": {
+        "label": "目标跟踪",
+        "capabilities": {
+            "dataset_import": True,
+            "dataset_publish": True,
+            "training": True,
+            "edge_deploy": True,
+        },
+        # The platform exposes tracking as an object-detection workflow; there
+        # is no separate tracking asset subtype or dataset content type.
+        "model_query": {
+            "type": "CV",
+            "sub_type": "OD",
+            "source": "Preset",
+        },
+        "dataset": {
+            "modal": "IMAGE",
+            "import": {
+                "content_type": "IMAGE_OBJECT_DETECTION",
+                "file_format": "PASCAL",
+                "file_source": "OBS",
+            },
+            "publish": {
+                "file_content_type": "IMAGE_OBJECT_DETECTION",
+                "publish_format": "PANGU",
+                "require_train_proportion": True,
+                "default_train_proportion": 0.8,
+            },
+            "training_catalog": "PUBLISH",
+        },
+        "training": {
+            "model_type": "CV",
+            "train_type": "SFT",
+            "model_source_detail": "SYSTEM",
+            "create_model_source": "pangu",
+            "default_batch_size": 1,
+            "batch_size_param_names": ["batch_size", "batchSize"],
+        },
+    },
 }
 
 

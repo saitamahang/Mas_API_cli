@@ -308,5 +308,8 @@ After submit, stop if the response has `terminal: true`. If submit returns `moni
 - `cv_image_classification`
 - `cv_object_detection`
 - `cv_semantic_segmentation`
+- `cv_anomaly_detection`
+- `cv_rotated_object_detection`
+- `cv_object_tracking`
 
 Add a new scenario profile in code before using any scenario not listed by `pangu-agent scenarios --json`.

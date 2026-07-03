@@ -533,6 +533,9 @@ train publish
 - `cv_image_classification`
 - `cv_object_detection`
 - `cv_semantic_segmentation`
+- `cv_anomaly_detection`
+- `cv_rotated_object_detection`
+- `cv_object_tracking`
 
 每个场景内置:
 
